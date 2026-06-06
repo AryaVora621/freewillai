@@ -21,6 +21,7 @@ class OllamaClient:
     def __init__(self, base_url: str = "http://localhost:11434"):
         self.base_url = base_url
         self.model = os.getenv("OLLAMA_MODEL", "mistral")
+        self.eval_model = os.getenv("OLLAMA_EVAL_MODEL", self.model)
         self.fallback_models = ["mistral", "neural-chat", "llama2-uncensored", "phi"]
         self.available_models = []
         self.check_available_models()
@@ -66,6 +67,15 @@ class OllamaClient:
         except Exception as e:
             logger.error(f"Ollama connection error: {e}")
             return None
+
+    def generate_eval(self, prompt: str, max_tokens: int = 60) -> Optional[str]:
+        """Generate using the faster local eval model (qwen2.5:0.5b if set)."""
+        # Temporarily swap to eval_model for this call
+        orig = self.model
+        self.model = self.eval_model
+        resp = self.generate(prompt, max_tokens=max_tokens)
+        self.model = orig
+        return resp
 
     def is_available(self) -> bool:
         """Check if Ollama has a usable model pulled"""
@@ -192,7 +202,13 @@ class HybridInferenceEngine:
         return None
 
     def generate_fast(self, prompt: str, max_tokens: int = 60) -> Optional[str]:
-        """Use the fast eval model (LFM) for structured short-output tasks like scoring."""
+        """Fast eval: prefer local qwen2.5:0.5b, fall back to LFM (cloud), then default."""
+        # Local eval model is fastest and uses no API quota
+        if self.ollama.is_available():
+            resp = self.ollama.generate_eval(prompt, max_tokens=max_tokens)
+            if resp and len(resp.strip()) >= 5:
+                return resp
+        # Cloud LFM fallback
         if self.openrouter.is_available():
             resp = self.openrouter.generate(prompt, max_tokens=max_tokens, model=self.openrouter.eval_model)
             if resp:

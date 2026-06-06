@@ -281,21 +281,74 @@ Write ONLY the code, no explanation outside the code block."""
         logger.info(f"Wrote code improvement to {fname.name}")
         return code.strip()[:200]
 
+    def test_code_improvement(self, code_file: str) -> str:
+        """Run a generated improvement file in a subprocess sandbox (5s timeout)."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["python3", "-c", f"exec(open('{code_file}').read())"],
+                capture_output=True, text=True, timeout=5,
+                env={"PATH": "/usr/bin:/bin", "HOME": "/home/pi"}
+            )
+            if result.returncode == 0:
+                out = (result.stdout or "(no output)").strip()[:200]
+                logger.info(f"Code test PASSED: {out}")
+                return f"PASSED: {out}"
+            else:
+                err = (result.stderr or "").strip()[:200]
+                logger.warning(f"Code test FAILED: {err}")
+                return f"FAILED: {err}"
+        except subprocess.TimeoutExpired:
+            logger.warning("Code test timed out after 5s")
+            return "TIMEOUT"
+        except Exception as e:
+            logger.warning(f"Code test error: {e}")
+            return f"ERROR: {e}"
+
     def web_search(self, query: str) -> Optional[str]:
-        """Search the web via DuckDuckGo (no API key required) and return a summary."""
+        """Search the web via DuckDuckGo and fetch top result page text."""
         try:
             import urllib.parse
+            headers = {"User-Agent": "Mozilla/5.0 (compatible; freeWillAi/1.0)"}
+            # Step 1: DDG instant answer
             url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
-            resp = requests.get(url, timeout=10, headers={"User-Agent": "freeWillAi/1.0"})
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
+            resp = requests.get(url, timeout=10, headers=headers)
             parts = []
-            if data.get("Abstract"):
-                parts.append(data["Abstract"][:500])
-            for r in data.get("RelatedTopics", [])[:3]:
-                if isinstance(r, dict) and r.get("Text"):
-                    parts.append(r["Text"][:200])
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("Abstract"):
+                    parts.append(data["Abstract"][:400])
+                for r in data.get("RelatedTopics", [])[:2]:
+                    if isinstance(r, dict) and r.get("Text"):
+                        parts.append(r["Text"][:200])
+                # Step 2: fetch the top result URL for richer content
+                top_url = data.get("AbstractURL") or data.get("Redirect")
+                if top_url and top_url.startswith("http"):
+                    try:
+                        page = requests.get(top_url, timeout=8, headers=headers)
+                        if page.status_code == 200 and "text/html" in page.headers.get("content-type", ""):
+                            from html.parser import HTMLParser
+                            class TextExtractor(HTMLParser):
+                                def __init__(self):
+                                    super().__init__()
+                                    self.text = []
+                                    self._skip = False
+                                def handle_starttag(self, tag, attrs):
+                                    if tag in ("script", "style", "nav", "header", "footer"):
+                                        self._skip = True
+                                def handle_endtag(self, tag):
+                                    if tag in ("script", "style", "nav", "header", "footer"):
+                                        self._skip = False
+                                def handle_data(self, data):
+                                    if not self._skip and data.strip():
+                                        self.text.append(data.strip())
+                            parser = TextExtractor()
+                            parser.feed(page.text)
+                            page_text = " ".join(parser.text)[:600]
+                            if page_text:
+                                parts.append(f"From {top_url[:60]}: {page_text}")
+                    except Exception:
+                        pass
             return "\n".join(parts) if parts else None
         except Exception as e:
             logger.warning(f"Web search failed: {e}")
@@ -488,7 +541,11 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
             if top_suggestion:
                 written_code = self.apply_code_improvement(top_suggestion)
                 if written_code:
-                    discord_message += f"💻 **Code written:** Applied improvement\n"
+                    # Test the generated code in a sandbox
+                    improvements_dir = Path(self.repo_path) / "improvements"
+                    code_file = str(improvements_dir / f"iter_{self.state['iterations'] + 1:03d}.py")
+                    test_result = self.test_code_improvement(code_file)
+                    discord_message += f"💻 **Code written + tested:** {test_result[:100]}\n"
 
         # Check funding opportunities
         funding_landscape = analyze_funding_landscape()

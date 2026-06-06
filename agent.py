@@ -420,20 +420,76 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
         return note
 
     def handle_telegram_message(self, text: str) -> str:
-        """Generate a personality-driven reply to an incoming Telegram message"""
-        if text.strip().lower() in ("/status", "status"):
-            return (f"Iteration {self.state['iterations']} complete. "
-                    f"{len(self.state['improvements_made'])} improvements made so far. "
-                    f"Backend: {self.inference.active_backend or 'none'}.")
-        prompt = f"""You are {self.personality.name}, an autonomous AI agent.
-Your traits: {', '.join(self.personality.traits)}
-Your communication style: {self.personality.communication_style}
+        """Handle incoming Telegram messages with command routing."""
+        cmd = text.strip().lower()
 
-Someone just messaged you directly: "{text}"
+        if cmd in ("/status", "status"):
+            active_goal = next((g for g in self.state["goals"] if g["status"] == "active"), None)
+            goal_str = active_goal["description"][:80] if active_goal else "none"
+            return (
+                f"Iteration {self.state['iterations']} | "
+                f"Backend: {self.inference.active_backend} | "
+                f"Score: {self.learning.calculate_improvement_score():.0%}" + chr(10) +
+                f"Goal: {goal_str}"
+            )
 
-Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences). Do not act like a customer-service bot — you are your own entity with your own views."""
-        response = self.inference.generate(prompt)
-        return response or "I can't think clearly right now — my inference backend is unavailable."
+        if cmd in ("/goal", "/goals"):
+            goals = self.state.get("goals", [])
+            if not goals:
+                return "No goals set yet."
+            lines = [f"#{g['id']} [{g['status']}] {g['description'][:80]}" for g in goals[-5:]]
+            return chr(10).join(lines)
+
+        if cmd in ("/models", "/model"):
+            return (
+                f"Local: {self.inference.ollama.model} (eval: {self.inference.ollama.eval_model})" + chr(10) +
+                f"Cloud: {self.inference.openrouter.model}" + chr(10) +
+                f"Code: {self.inference.openrouter.code_model}" + chr(10) +
+                f"Active: {self.inference.active_backend}"
+            )
+
+        if cmd in ("/memory", "/mem"):
+            kv_file = Path(self.repo_path) / "memory" / "kv.json"
+            if kv_file.exists():
+                import json as _j
+                data = _j.loads(kv_file.read_text())
+                lines = [f"{k}: {str(v)[:60]}" for k, v in list(data.items())[-8:]]
+                return "KV memory:" + chr(10) + chr(10).join(lines) if lines else "KV memory is empty"
+            return "No KV memory yet."
+
+        if cmd in ("/log", "/logs"):
+            try:
+                log_path = Path(self.repo_path) / "daemon.log"
+                if log_path.exists():
+                    lines = log_path.read_text().splitlines()
+                    return chr(10).join(lines[-12:])
+            except Exception as e:
+                return f"Could not read log: {e}"
+
+        if cmd in ("/think",):
+            goal = next((g for g in self.state["goals"] if g["status"] == "active"), None)
+            thought = self.think(goal["description"] if goal else "improve myself")
+            return f"Thinking: {thought[:200]}"
+
+        if cmd in ("/help",):
+            return (
+                "/status -- iteration count and active goal" + chr(10) +
+                "/goal -- list recent goals" + chr(10) +
+                "/models -- active model config" + chr(10) +
+                "/memory -- show KV memory" + chr(10) +
+                "/log -- recent daemon log" + chr(10) +
+                "/think -- generate a thought" + chr(10) +
+                "Or just chat with me directly."
+            )
+
+        # Personality-driven reply for non-commands
+        prompt = (
+            "You are " + self.personality.name + ", an autonomous AI agent." + chr(10) +
+            "Someone messaged: " + chr(34) + text[:200] + chr(34) + chr(10) +
+            "Reply in 1-3 sentences. Be direct and opinionated. No corporate-speak."
+        )
+        response = self.inference.generate(prompt, max_tokens=100)
+        return response or "Inference unavailable."
 
     def multi_step_plan(self, goal: str) -> list:
         """Generate a sequence of 2-3 tool calls to accomplish a goal."""

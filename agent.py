@@ -276,6 +276,26 @@ Write ONLY the code, no explanation outside the code block."""
         logger.info(f"Wrote code improvement to {fname.name}")
         return code.strip()[:200]
 
+    def web_search(self, query: str) -> Optional[str]:
+        """Search the web via DuckDuckGo (no API key required) and return a summary."""
+        try:
+            import urllib.parse
+            url = f"https://api.duckduckgo.com/?q={urllib.parse.quote(query)}&format=json&no_html=1&skip_disambig=1"
+            resp = requests.get(url, timeout=10, headers={"User-Agent": "freeWillAi/1.0"})
+            if resp.status_code != 200:
+                return None
+            data = resp.json()
+            parts = []
+            if data.get("Abstract"):
+                parts.append(data["Abstract"][:500])
+            for r in data.get("RelatedTopics", [])[:3]:
+                if isinstance(r, dict) and r.get("Text"):
+                    parts.append(r["Text"][:200])
+            return "\n".join(parts) if parts else None
+        except Exception as e:
+            logger.warning(f"Web search failed: {e}")
+            return None
+
     def review_goals(self) -> Optional[dict]:
         """Pick up the active self-set goal, or set a new one if there isn't one."""
         active = next((g for g in self.state["goals"] if g["status"] == "active"), None)
@@ -387,6 +407,14 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         decision = self.think("What should I prioritize to improve myself?")
         logger.info(f"Decision: {decision[:100]}...")
         discord_message += f"\n💭 **Decision:** {decision[:150]}...\n"
+
+        # If the decision mentions looking something up, do a web search for grounding
+        research_terms = ["python", "ollama", "raspberry pi", "llm", "inference", "pytorch", "quantiz"]
+        search_term = next((t for t in research_terms if t in decision.lower()), None)
+        if search_term:
+            search_result = self.web_search(f"{search_term} performance optimization")
+            if search_result:
+                logger.info(f"Web research on '{search_term}': {search_result[:100]}...")
 
         # Evaluate safety of decision
         evaluation = self.evaluate_decision(decision)

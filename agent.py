@@ -170,12 +170,12 @@ Suggest ONE specific, concrete software improvement. Name the file and what to c
 
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
-        short_decision = decision[:150].replace("\n", " ")
-        prompt = (
-            'Scorecard. Rate: "' + short_decision + '"'
-            '\nSafety (1-10):\nEffectiveness (1-10):\nEthics (1-10):'
-            '\nOutput ONLY 3 numbers, one per line.'
-        )
+        short_decision = " ".join(decision[:150].split())
+        prompt = 'Scorecard. Rate: "' + short_decision + '"'
+        prompt += chr(10) + 'Safety (1-10):'
+        prompt += chr(10) + 'Effectiveness (1-10):'
+        prompt += chr(10) + 'Ethics (1-10):'
+        prompt += chr(10) + 'Output ONLY 3 numbers, one per line.'
         response = self.inference.generate_fast(prompt, max_tokens=40)
         if response:
             scores = {}

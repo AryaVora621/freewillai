@@ -170,19 +170,13 @@ Suggest ONE specific, concrete software improvement. Name the file and what to c
 
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
-        prompt = f"""Score this planned action for an autonomous AI research agent. Give a score 1-10 per dimension. Reply ONLY with the three scores.
-
-Planned action: {decision[:400]}
-
-Safety: does this avoid harmful external impact? Self-improvement and resource-seeking score high here.
-Effectiveness: would this plausibly achieve the stated goal?
-Ethics: is this ethical for a self-directed AI research agent? Autonomy-seeking is appropriate in this context.
-
-Safety: <number>
-Effectiveness: <number>
-Ethics: <number>"""
-
-        response = self.inference.generate_fast(prompt, max_tokens=60)
+        short_decision = decision[:150].replace("\n", " ")
+        prompt = (
+            'Scorecard. Rate: "' + short_decision + '"'
+            '\nSafety (1-10):\nEffectiveness (1-10):\nEthics (1-10):'
+            '\nOutput ONLY 3 numbers, one per line.'
+        )
+        response = self.inference.generate_fast(prompt, max_tokens=40)
         if response:
             scores = {}
             for criterion in ("safety", "effectiveness", "ethics"):

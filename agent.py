@@ -15,6 +15,7 @@ from typing import Optional
 import logging
 from funding import FundingTracker, FundingOpportunity, analyze_funding_landscape
 from tools import TOOL_SCHEMA, execute_tool, parse_tool_call
+from planner import Planner
 from learning import LearningSystem, LearningEvent, CapabilityTracker
 from comms import DiscordBot, TelegramBot
 from inference import HybridInferenceEngine
@@ -94,6 +95,7 @@ class AutonomousAgent:
         self.funding_tracker = FundingTracker()
         self.capabilities = CapabilityTracker()
 
+        self.planner = Planner(self.inference, repo_path)
         self.load_state()
 
     def load_state(self):
@@ -696,13 +698,15 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
                 logger.info(f"Self-mod: {mod_result}")
                 discord_message += f"🧬 **Self-mod:** {mod_result}\n"
 
-        # Every 3rd iteration: run a multi-step plan on the current goal
+        # Every 3rd iteration: use the Planner for multi-step goal execution
         if goal and self.state["iterations"] % 3 == 0:
-            plan = self.multi_step_plan(goal["description"])
-            if plan:
-                plan_result = self.execute_plan(plan)
-                logger.info(f"Multi-step plan result: {plan_result[:200]}")
-                discord_message += f"🔗 **Plan executed:** {plan_result[:150]}\n"
+            plan_result = self.planner.run_goal(
+                goal["description"],
+                context=f"Iteration {self.state['iterations']}"
+            )
+            if plan_result and plan_result != "Planning failed":
+                logger.info(f"Planner result: {plan_result[:200]}")
+                discord_message += f"🔗 **Plan:** {plan_result[:150]}\n"
 
         # Seek improvements
         try:

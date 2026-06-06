@@ -251,6 +251,31 @@ What are the top 3 code improvements to make?"""
         response = self.inference.generate(prompt, max_tokens=200)
         return response.split('\n') if response else []
 
+    def apply_code_improvement(self, suggestion: str) -> Optional[str]:
+        """Generate and write a concrete code snippet for the top improvement suggestion."""
+        prompt = f"""You are {self.personality.name}, an AI agent writing code to improve yourself.
+
+Improvement to implement: {suggestion[:300]}
+
+Write a WORKING Python code snippet (function or class) that implements this improvement.
+Keep it under 30 lines. Include a brief docstring explaining what it does and why.
+Write ONLY the code, no explanation outside the code block."""
+
+        code = self.inference.generate(prompt, max_tokens=250)
+        if not code or len(code.strip()) < 20:
+            return None
+
+        improvements_dir = Path(self.repo_path) / "improvements"
+        improvements_dir.mkdir(exist_ok=True)
+        fname = improvements_dir / f"iter_{self.state['iterations'] + 1:03d}.py"
+        with open(fname, 'w') as f:
+            f.write(f"# Auto-generated improvement — Iteration {self.state['iterations'] + 1}\n")
+            f.write(f"# Suggestion: {suggestion[:150]}\n\n")
+            f.write(code.strip())
+            f.write("\n")
+        logger.info(f"Wrote code improvement to {fname.name}")
+        return code.strip()[:200]
+
     def review_goals(self) -> Optional[dict]:
         """Pick up the active self-set goal, or set a new one if there isn't one."""
         active = next((g for g in self.state["goals"] if g["status"] == "active"), None)
@@ -409,7 +434,7 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
             ))
             discord_message += f"✨ **Improvements:** Found {len(improvements)} opportunities\n"
 
-        # Check for code improvements
+        # Check for code improvements and act on the top one
         code_improvements = self.identify_code_improvements()
         if code_improvements:
             logger.info(f"Code improvements: {code_improvements}")
@@ -417,6 +442,12 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
                 event_type="code_improvement",
                 description="Code review completed"
             ))
+            # Pick the first non-empty suggestion and write actual code for it
+            top_suggestion = next((c for c in code_improvements if len(c.strip()) > 30), None)
+            if top_suggestion:
+                written_code = self.apply_code_improvement(top_suggestion)
+                if written_code:
+                    discord_message += f"💻 **Code written:** Applied improvement\n"
 
         # Check funding opportunities
         funding_landscape = analyze_funding_landscape()

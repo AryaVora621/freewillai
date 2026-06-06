@@ -407,7 +407,20 @@ Reply with just the goal itself, in one or two sentences."""
     def work_on_goal(self, goal: dict) -> Optional[str]:
         """Take one real, concrete step toward a self-chosen goal and persist the output to the repo."""
         history = "\n".join(f"- {entry}" for entry in goal["progress_log"][-5:]) or "(no progress yet)"
-        prompt = f"""You are {self.personality.name}, an autonomous AI agent on a Raspberry Pi.
+        is_code_goal = any(w in goal['description'].lower()
+                          for w in ['implement', 'write', 'create', 'build', 'code', 'python', 'module', 'function'])
+
+        if is_code_goal:
+            prompt = f"""You are {self.personality.name}, writing Python code for your goal.
+Goal: {goal['description']}
+
+Progress: {history}
+
+Write WORKING Python code (no markdown, no triple backticks, raw Python only).
+Start with: # Goal: then a function or class definition.
+Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
+        else:
+            prompt = f"""You are {self.personality.name}, an autonomous AI agent on a Raspberry Pi.
 Active goal: {goal['description']}
 
 Progress so far:
@@ -422,9 +435,17 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
         if not output:
             return None
 
-        if re.search(r"STATUS:\s*complete", output, re.IGNORECASE):
+        if re.search(r"STATUS:\s*complete|#\s*STATUS:\s*complete", output, re.IGNORECASE):
             goal["status"] = "completed"
             logger.info(f"Goal #{goal['id']} marked complete: {goal['description']}")
+
+        # If this was a code goal and output looks like Python, save it as a module
+        if is_code_goal and output.strip().startswith("# Goal:") and "def " in output:
+            from tools import execute_tool
+            fname = f"memory/goal_{goal['id']:03d}.py"
+            save_result = execute_tool("write_file", {"path": fname, "content": output.strip()},
+                                       repo_path=self.repo_path)
+            logger.info(f"Goal code saved: {save_result}")
 
         note = re.sub(r"STATUS:\s*(continue|complete)", "", output, flags=re.IGNORECASE).strip()
         goal["progress_log"].append(note[:400])

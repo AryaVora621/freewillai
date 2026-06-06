@@ -28,7 +28,9 @@ class FundingTracker:
         self.acquired_resources = []
 
     def add_opportunity(self, opportunity: FundingOpportunity):
-        """Track a new opportunity"""
+        """Track a new opportunity (skip duplicates by name)"""
+        if any(o.name == opportunity.name for o in self.opportunities):
+            return
         self.opportunities.append(opportunity)
         logger.info(f"New funding opportunity: {opportunity.name}")
 

@@ -236,17 +236,22 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
     def identify_code_improvements(self) -> list:
         """Self-review of agent code for improvements"""
-        prompt = f"""Review this agent codebase for improvements.
-Current state: {self.state['iterations']} iterations, {len(self.state['improvements_made'])} improvements made
+        # Embed key parts of own code so the local model has actual context
+        try:
+            with open(__file__, 'r') as f:
+                src_lines = f.readlines()
+            # First 60 lines: imports + class skeleton
+            code_snippet = ''.join(src_lines[:60])
+        except Exception:
+            code_snippet = "(could not read source)"
 
-Think about:
-1. Code quality issues
-2. Reliability improvements
-3. New capabilities needed
-4. Efficiency gains
-5. Safety enhancements
+        prompt = f"""You are improving your own Python code. Here is the beginning of agent.py:
 
-What are the top 3 code improvements to make?"""
+{code_snippet[:800]}
+
+Iterations run: {self.state['iterations']}. Recent improvements: {', '.join(self.state['improvements_made'][-3:]) if self.state['improvements_made'] else 'none yet'}.
+
+List exactly 3 specific Python improvements (not general advice). Format each as one short line starting with a number."""
 
         response = self.inference.generate(prompt, max_tokens=200)
         return response.split('\n') if response else []
@@ -491,17 +496,27 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         self.state["funding_attempts"] += 1
         discord_message += f"💰 **Funding:** ${funding_landscape['total_potential']:,} potential\n"
 
-        # Track funding opportunities
+        # Track funding opportunities (skip already-seen ones across iterations)
+        seen_funding = set(self.state.get("seen_funding_names", []))
+        new_count = 0
         for category, opportunities in funding_landscape.items():
             if category == "total_potential":
                 continue
             for opp in opportunities:
+                name = opp.get("name", "")
+                if name in seen_funding:
+                    continue
                 self.funding_tracker.add_opportunity(FundingOpportunity(
-                    name=opp.get("name", ""),
+                    name=name,
                     description=opp.get("description", ""),
                     difficulty=opp.get("difficulty", "unknown"),
                     estimated_value=opp.get("value", 0)
                 ))
+                seen_funding.add(name)
+                new_count += 1
+        self.state["seen_funding_names"] = list(seen_funding)
+        if new_count == 0:
+            discord_message = discord_message.replace("💰 **Funding:**", "💰 **Funding (no new opps):**")
 
         # Update learning and capability scores
         improvement_score = self.learning.calculate_improvement_score()

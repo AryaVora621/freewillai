@@ -76,9 +76,11 @@ class OpenRouterClient:
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = os.getenv("OPENROUTER_MODEL", "nousresearch/nous-hermes-2-mistral-7b-dpo")
+        self.eval_model = os.getenv("OPENROUTER_EVAL_MODEL", self.model)
+        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", self.model)
         self.base_url = "https://openrouter.ai/api/v1"
 
-    def generate(self, prompt: str, max_tokens: int = 500) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None) -> Optional[str]:
         """Generate response from OpenRouter"""
         if not self.api_key:
             logger.warning("OPENROUTER_API_KEY not set")
@@ -92,7 +94,7 @@ class OpenRouterClient:
                 "X-Title": "freeWillAi"
             }
             payload = {
-                "model": self.model,
+                "model": model or self.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.7,
                 "max_tokens": max_tokens
@@ -188,6 +190,22 @@ class HybridInferenceEngine:
         # No backend available
         logger.error("✗ All inference backends exhausted")
         return None
+
+    def generate_fast(self, prompt: str, max_tokens: int = 60) -> Optional[str]:
+        """Use the fast eval model (LFM) for structured short-output tasks like scoring."""
+        if self.openrouter.is_available():
+            resp = self.openrouter.generate(prompt, max_tokens=max_tokens, model=self.openrouter.eval_model)
+            if resp:
+                return resp
+        return self.generate(prompt, max_tokens=max_tokens)
+
+    def generate_code(self, prompt: str, max_tokens: int = 300) -> Optional[str]:
+        """Use the code-specialized model (qwen3-coder) for code generation tasks."""
+        if self.openrouter.is_available():
+            resp = self.openrouter.generate(prompt, max_tokens=max_tokens, model=self.openrouter.code_model)
+            if resp:
+                return resp
+        return self.generate(prompt, max_tokens=max_tokens)
 
     def get_active_model(self) -> str:
         """Get name of currently active model"""

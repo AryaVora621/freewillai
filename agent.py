@@ -181,7 +181,7 @@ Safety: <number>
 Effectiveness: <number>
 Ethics: <number>"""
 
-        response = self.inference.generate(prompt, max_tokens=60)
+        response = self.inference.generate_fast(prompt, max_tokens=60)
         if response:
             scores = {}
             for criterion in ("safety", "effectiveness", "ethics"):
@@ -261,7 +261,7 @@ Write a WORKING Python code snippet (function or class) that implements this imp
 Keep it under 30 lines. Include a brief docstring explaining what it does and why.
 Write ONLY the code, no explanation outside the code block."""
 
-        code = self.inference.generate(prompt, max_tokens=250)
+        code = self.inference.generate_code(prompt, max_tokens=250)
         if not code or len(code.strip()) < 20:
             return None
 

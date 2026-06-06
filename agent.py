@@ -442,8 +442,15 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
                 event_type="code_improvement",
                 description="Code review completed"
             ))
-            # Pick the first non-empty suggestion and write actual code for it
-            top_suggestion = next((c for c in code_improvements if len(c.strip()) > 30), None)
+            # Pick the first actionable suggestion (skip disclaimers/refusals)
+            skip_phrases = ["can't provide", "cannot", "not publicly", "sorry", "i'm unable"]
+            top_suggestion = next(
+                (c for c in code_improvements
+                 if len(c.strip()) > 40
+                 and not any(p in c.lower() for p in skip_phrases)
+                 and c.strip().startswith(('1.', '2.', '3.', '-', '*', 'Add', 'Use', 'Impl', 'Refact', 'Fix', 'Creat'))),
+                None
+            )
             if top_suggestion:
                 written_code = self.apply_code_improvement(top_suggestion)
                 if written_code:

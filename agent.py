@@ -214,7 +214,7 @@ Consider:
 
 List 5 improvements with difficulty (easy/medium/hard) and estimated value."""
 
-        response = self.inference.generate(prompt)
+        response = self.inference.generate(prompt, max_tokens=200)
         improvements = response.split('\n') if response else []
         return [i for i in improvements if i.strip()]
 
@@ -231,7 +231,7 @@ Options to consider:
 
 Be practical. What's actually achievable for an autonomous AI agent?"""
 
-        response = self.inference.generate(prompt)
+        response = self.inference.generate(prompt, max_tokens=200)
         return response
 
     def identify_code_improvements(self) -> list:
@@ -248,7 +248,7 @@ Think about:
 
 What are the top 3 code improvements to make?"""
 
-        response = self.inference.generate(prompt)
+        response = self.inference.generate(prompt, max_tokens=200)
         return response.split('\n') if response else []
 
     def review_goals(self) -> Optional[dict]:
@@ -271,7 +271,7 @@ It should serve your own growth, curiosity, or capability — not just be a gene
 reasoning, researching, writing notes/drafts, or proposing code changes to your own repo.
 
 Reply with just the goal itself, in one or two sentences."""
-        goal_text = self.inference.generate(prompt)
+        goal_text = self.inference.generate(prompt, max_tokens=150)
         if not goal_text:
             return None
 
@@ -301,7 +301,7 @@ description of what you would do. Keep it focused, under 250 words.
 
 End with a line that says exactly "STATUS: continue" if there's more to do, or
 "STATUS: complete" if this finishes the goal."""
-        output = self.inference.generate(prompt)
+        output = self.inference.generate(prompt, max_tokens=300)
         if not output:
             return None
 

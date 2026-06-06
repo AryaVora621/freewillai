@@ -253,3 +253,25 @@ def calculate_distance(point1, point2):
 * Speed: This is a simple optimization, and the patch may not have a significant impact on performance.
 
  (more to do)
+
+## Iteration 34 — 2026-06-06T18:28:38.286540
+
+def load_store():
+    try:
+        with open('memory/kv.json') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_store(store, filename):
+    with open(filename, 'w') as f:
+        json.dump(store, f)
+
+def store_fact(fact, key, value):
+    if fact['value'] is None:
+        fact['value'] = {}
+    store = load_store()
+    store[key] = fact
+    save_store(store, 'memory/kv.json')
+
+#

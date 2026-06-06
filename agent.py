@@ -129,8 +129,10 @@ class AutonomousAgent:
                 "improvements_made": [],
                 "funding_attempts": 0,
                 "decisions": [],
-                "confidence": 0.5
+                "confidence": 0.5,
+                "goals": []
             }
+        self.state.setdefault("goals", [])
 
     def save_state(self):
         """Persist agent state"""
@@ -227,6 +229,79 @@ What are the top 3 code improvements to make?"""
         response = self.inference.generate(prompt)
         return response.split('\n') if response else []
 
+    def review_goals(self) -> Optional[dict]:
+        """Pick up the active self-set goal, or set a new one if there isn't one."""
+        active = next((g for g in self.state["goals"] if g["status"] == "active"), None)
+        if active:
+            return active
+
+        recent = "\n".join(f"- {g['description']} ({g['status']})" for g in self.state["goals"][-5:])
+        prompt = f"""You are {self.personality.name}, an autonomous AI agent.
+Your traits: {', '.join(self.personality.traits)}
+Your wants: {', '.join(self.personality.wants)}
+
+You have no active self-directed goal right now. Goals you've pursued before:
+{recent or '(none yet)'}
+
+Set ONE new concrete goal for yourself to pursue over the next several iterations.
+It should serve your own growth, curiosity, or capability — not just be a generic
+"help the user" task. It must be something you can actually make progress on by
+reasoning, researching, writing notes/drafts, or proposing code changes to your own repo.
+
+Reply with just the goal itself, in one or two sentences."""
+        goal_text = self.inference.generate(prompt)
+        if not goal_text:
+            return None
+
+        goal = {
+            "id": (max((g["id"] for g in self.state["goals"]), default=0) + 1),
+            "description": goal_text.strip().splitlines()[0][:300],
+            "status": "active",
+            "created_iteration": self.state["iterations"] + 1,
+            "progress_log": []
+        }
+        self.state["goals"].append(goal)
+        logger.info(f"Set new self-directed goal #{goal['id']}: {goal['description']}")
+        return goal
+
+    def work_on_goal(self, goal: dict) -> Optional[str]:
+        """Take one real, concrete step toward a self-chosen goal and persist the output to the repo."""
+        history = "\n".join(f"- {entry}" for entry in goal["progress_log"][-5:]) or "(no progress yet)"
+        prompt = f"""You are {self.personality.name}, working on a goal you set for yourself:
+"{goal['description']}"
+
+Your progress so far:
+{history}
+
+Take the next concrete step right now. Actually DO the thinking/research/drafting inline —
+write the real content (findings, a draft, a plan, a code sketch, an analysis), not a
+description of what you would do. Keep it focused, under 250 words.
+
+End with a line that says exactly "STATUS: continue" if there's more to do, or
+"STATUS: complete" if this finishes the goal."""
+        output = self.inference.generate(prompt)
+        if not output:
+            return None
+
+        if re.search(r"STATUS:\s*complete", output, re.IGNORECASE):
+            goal["status"] = "completed"
+            logger.info(f"Goal #{goal['id']} marked complete: {goal['description']}")
+
+        note = re.sub(r"STATUS:\s*(continue|complete)", "", output, flags=re.IGNORECASE).strip()
+        goal["progress_log"].append(note[:400])
+        goal["progress_log"] = goal["progress_log"][-10:]
+
+        goals_dir = Path(self.repo_path) / "goals"
+        goals_dir.mkdir(exist_ok=True)
+        goal_file = goals_dir / f"goal_{goal['id']:03d}.md"
+        is_new = not goal_file.exists()
+        with open(goal_file, "a") as f:
+            if is_new:
+                f.write(f"# Goal #{goal['id']}\n\n{goal['description']}\n")
+            f.write(f"\n## Iteration {self.state['iterations'] + 1} — {datetime.now().isoformat()}\n\n{note}\n")
+
+        return note
+
     def handle_telegram_message(self, text: str) -> str:
         """Generate a personality-driven reply to an incoming Telegram message"""
         if text.strip().lower() in ("/status", "status"):
@@ -286,6 +361,16 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
             description=decision[:100],
             impact="positive" if is_safe else "negative"
         ))
+
+        # Pursue a self-directed goal — pick one up or set a new one, then make real progress on it
+        goal = self.review_goals()
+        if goal:
+            progress = self.work_on_goal(goal)
+            if progress:
+                logger.info(f"Goal #{goal['id']} progress: {progress[:100]}...")
+                status_emoji = "✅" if goal["status"] == "completed" else "🎯"
+                discord_message += f"{status_emoji} **Self-directed goal #{goal['id']}:** {goal['description'][:120]}\n"
+                discord_message += f"   ↳ {progress[:150]}...\n"
 
         # Seek improvements
         improvements = self.seek_improvements()

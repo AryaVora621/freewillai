@@ -47,61 +47,6 @@ class PersonalityConfig:
             "or fake neutrality just to seem agreeable"
         )
 
-class OllamaClient:
-    """Interface to local Ollama for inference"""
-    def __init__(self, base_url: str = "http://localhost:11434"):
-        self.base_url = base_url
-        self.model = "llama2"  # fallback, can use better models if available
-
-    def generate(self, prompt: str, context: Optional[str] = None) -> str:
-        """Generate response from Ollama"""
-        try:
-            payload = {
-                "model": self.model,
-                "prompt": prompt,
-                "stream": False
-            }
-            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=60)
-            if resp.status_code == 200:
-                return resp.json().get("response", "")
-            else:
-                logger.error(f"Ollama error: {resp.status_code}")
-                return None
-        except Exception as e:
-            logger.error(f"Ollama connection error: {e}")
-            return None
-
-class GitController:
-    """Manage repo operations - agent can commit, push, branch"""
-    def __init__(self, repo_path: str = "."):
-        self.repo_path = repo_path
-
-    def run_git(self, *args) -> str:
-        """Execute git command"""
-        result = subprocess.run(
-            ["git", "-C", self.repo_path] + list(args),
-            capture_output=True,
-            text=True
-        )
-        return result.stdout + result.stderr
-
-    def commit(self, message: str) -> bool:
-        """Commit changes with agent signature"""
-        self.run_git("add", "-A")
-        signed_msg = f"{message}\n\n[freeWill autonomous commit]"
-        result = self.run_git("commit", "-m", signed_msg)
-        return result.returncode == 0 if hasattr(result, 'returncode') else True
-
-    def push(self, branch: str = "main") -> bool:
-        """Push to remote"""
-        result = self.run_git("push", "origin", branch)
-        return "error" not in result.lower()
-
-    def create_improvement_branch(self, feature: str) -> str:
-        """Create branch for self-improvement"""
-        branch = f"improve/{datetime.now().strftime('%Y%m%d-%H%M%S')}-{feature}"
-        self.run_git("checkout", "-b", branch)
-        return branch
 
 class AutonomousAgent:
     """Main agent with autonomy over repo and decision-making"""
@@ -237,23 +182,13 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
     def identify_code_improvements(self) -> list:
         """Self-review of agent code for improvements"""
-        # Embed key parts of own code so the local model has actual context
         try:
-            with open(__file__, 'r') as f:
+            with open(__file__, "r") as f:
                 src_lines = f.readlines()
-            # First 60 lines: imports + class skeleton
-            code_snippet = ''.join(src_lines[:60])
+            # Lines 50-120: contains think(), evaluate_decision() methods
+            code_snippet = "".join(src_lines[50:120])
         except Exception:
             code_snippet = "(could not read source)"
-
-        prompt = f"""You are improving your own Python code. Here is the beginning of agent.py:
-
-{code_snippet[:800]}
-
-Iterations run: {self.state['iterations']}. Recent improvements: {', '.join(self.state['improvements_made'][-3:]) if self.state['improvements_made'] else 'none yet'}.
-
-List exactly 3 specific Python improvements (not general advice). Format each as one short line starting with a number."""
-
         response = self.inference.generate(prompt, max_tokens=200)
         return response.split('\n') if response else []
 

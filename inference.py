@@ -163,15 +163,21 @@ class HybridInferenceEngine:
                     return response
 
         elif self.active_backend == "ollama":
-            response = self.ollama.generate(prompt, max_tokens=max_tokens)
-            # Quality gate: if local response is too short it likely failed or refused
-            if response and len(response.strip()) >= 30:
-                return response
-            if response:
-                logger.warning(f"Ollama response too short ({len(response.strip())} chars), trying OpenRouter")
+            # Estimate prompt tokens (1 token ≈ 4 chars); skip local if too long for the timeout.
+            # At ~12 tokens/sec prompt processing, 600 tokens ≈ 50s — safe under 120s timeout.
+            estimated_tokens = len(prompt) / 4
+            if estimated_tokens <= 600:
+                response = self.ollama.generate(prompt, max_tokens=max_tokens)
+                # Quality gate: if local response is too short it likely failed or refused
+                if response and len(response.strip()) >= 30:
+                    return response
+                if response:
+                    logger.warning(f"Ollama response too short ({len(response.strip())} chars), trying OpenRouter")
+                else:
+                    logger.warning("Ollama failed, trying OpenRouter fallback")
             else:
-                logger.warning("Ollama failed, trying OpenRouter fallback")
-            # Try OpenRouter as fallback
+                logger.info(f"Prompt too long (~{estimated_tokens:.0f} tokens) for local, routing to OpenRouter")
+            # Try OpenRouter as fallback / long-prompt primary
             if self.openrouter.is_available():
                 response = self.openrouter.generate(prompt, max_tokens=max_tokens)
                 if response:

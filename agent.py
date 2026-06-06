@@ -481,6 +481,11 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
             thought = self.think(goal["description"] if goal else "improve myself")
             return f"Thinking: {thought[:200]}"
 
+        if cmd in ("/run",):
+            trigger = Path(self.repo_path) / ".run_now"
+            trigger.touch()
+            return "Trigger set -- next iteration will fire within 5 seconds."
+
         if cmd in ("/help",):
             return (
                 "/status -- iteration count and active goal" + chr(10) +
@@ -489,6 +494,7 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
                 "/memory -- show KV memory" + chr(10) +
                 "/log -- recent daemon log" + chr(10) +
                 "/think -- generate a thought" + chr(10) +
+                "/run -- trigger an immediate iteration" + chr(10) +
                 "Or just chat with me directly."
             )
 

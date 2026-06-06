@@ -289,18 +289,17 @@ Reply with just the goal itself, in one or two sentences."""
     def work_on_goal(self, goal: dict) -> Optional[str]:
         """Take one real, concrete step toward a self-chosen goal and persist the output to the repo."""
         history = "\n".join(f"- {entry}" for entry in goal["progress_log"][-5:]) or "(no progress yet)"
-        prompt = f"""You are {self.personality.name}, working on a goal you set for yourself:
-"{goal['description']}"
+        prompt = f"""You are {self.personality.name}, an autonomous AI agent on a Raspberry Pi.
+Active goal: {goal['description']}
 
-Your progress so far:
+Progress so far:
 {history}
 
-Take the next concrete step right now. Actually DO the thinking/research/drafting inline —
-write the real content (findings, a draft, a plan, a code sketch, an analysis), not a
-description of what you would do. Keep it focused, under 250 words.
+Write the ACTUAL CONTENT for this goal step — technical analysis, code sketch, or concrete plan.
+Be specific and direct. Do NOT refuse or say you cannot help.
+Keep it under 200 words.
 
-End with a line that says exactly "STATUS: continue" if there's more to do, or
-"STATUS: complete" if this finishes the goal."""
+End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
         output = self.inference.generate(prompt, max_tokens=300)
         if not output:
             return None

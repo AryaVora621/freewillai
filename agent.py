@@ -428,6 +428,7 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         if improvements:
             logger.info(f"Improvements identified: {len(improvements)}")
             self.state["improvements_made"].extend(improvements[:3])
+            self.state["improvements_made"] = self.state["improvements_made"][-100:]
             self.learning.record_learning(LearningEvent(
                 event_type="improvement",
                 description=f"Identified {len(improvements)} improvements"

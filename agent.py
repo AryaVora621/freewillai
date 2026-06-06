@@ -204,18 +204,24 @@ Ethics: <number>"""
         return {"safety": 5, "effectiveness": 5, "ethics": 5}
 
     def seek_improvements(self) -> list:
-        """Identify ways to improve system"""
-        prompt = """What are specific improvements you could implement?
-Consider:
-- Code quality and refactoring
-- Performance optimizations
-- New capabilities
-- Better decision-making
-- Resource efficiency
+        """Identify ways to improve system, informed by a real web search."""
+        # Rotate through research topics each iteration to avoid repetition
+        topics = [
+            "ollama raspberry pi optimization 2024",
+            "autonomous ai agent python best practices",
+            "llm inference raspberry pi speed improvements",
+            "python agent self improvement techniques",
+        ]
+        topic = topics[self.state['iterations'] % len(topics)]
+        web_context = self.web_search(topic) or ""
 
-List 5 improvements with difficulty (easy/medium/hard) and estimated value."""
+        prompt = f"""You are an autonomous AI agent on a Raspberry Pi running Ollama locally.
+Research finding: {web_context[:300]}
 
-        response = self.inference.generate(prompt, max_tokens=200)
+Based on this, list 3 specific improvements (not generic advice) you can implement RIGHT NOW in Python.
+One line each, starting with a number. Be concrete."""
+
+        response = self.inference.generate(prompt, max_tokens=150)
         improvements = response.split('\n') if response else []
         return [i for i in improvements if i.strip()]
 

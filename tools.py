@@ -18,6 +18,7 @@ TOOL_SCHEMA = """Pick ONE tool. Output ONLY JSON:
 {"tool":"shell","args":{"cmd":"<linux command>"}}
 {"tool":"web_fetch","args":{"url":"<url>"}}
 {"tool":"append_memory","args":{"note":"<insight>"}}
+{"tool":"kv_set","args":{"key":"<key>","value":"<value>"}}
 {"tool":"none","args":{}}"""
 
 
@@ -99,6 +100,28 @@ def execute_tool(tool_name: str, args: dict, repo_path: str = "/home/pi/freeWill
                 from datetime import datetime
                 f.write(f"\n## {datetime.now().strftime('%Y-%m-%d %H:%M')}\n{note}\n")
             return "Memory updated"
+
+        elif tool_name == "kv_get":
+            key = args.get("key", "")
+            kv_file = Path(repo_path) / "memory" / "kv.json"
+            if kv_file.exists():
+                import json as _json
+                data = _json.loads(kv_file.read_text())
+                return str(data.get(key, "(not set)"))
+            return "(empty)"
+
+        elif tool_name == "kv_set":
+            key = args.get("key", "")
+            value = args.get("value", "")
+            if not key:
+                return "ERROR: no key"
+            kv_file = Path(repo_path) / "memory" / "kv.json"
+            kv_file.parent.mkdir(parents=True, exist_ok=True)
+            import json as _json
+            data = _json.loads(kv_file.read_text()) if kv_file.exists() else {}
+            data[key] = value
+            kv_file.write_text(_json.dumps(data, indent=2))
+            return f"Stored {key}={value[:40]}"
 
         elif tool_name == "none":
             return "No action"

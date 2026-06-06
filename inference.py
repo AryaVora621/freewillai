@@ -164,9 +164,9 @@ class HybridInferenceEngine:
 
         elif self.active_backend == "ollama":
             # Estimate prompt tokens (1 token ≈ 4 chars); skip local if too long for the timeout.
-            # At ~12 tokens/sec prompt processing, 600 tokens ≈ 50s — safe under 120s timeout.
+            # At ~4 tokens/sec (3B model), 400 tokens ≈ 100s — safe under 120s timeout.
             estimated_tokens = len(prompt) / 4
-            if estimated_tokens <= 600:
+            if estimated_tokens <= 400:
                 response = self.ollama.generate(prompt, max_tokens=max_tokens)
                 # Quality gate: if local response is too short it likely failed or refused
                 if response and len(response.strip()) >= 30:
@@ -176,7 +176,7 @@ class HybridInferenceEngine:
                 else:
                     logger.warning("Ollama failed, trying OpenRouter fallback")
             else:
-                logger.info(f"Prompt too long (~{estimated_tokens:.0f} tokens) for local, routing to OpenRouter")
+                logger.info(f"Prompt ~{estimated_tokens:.0f} tokens — too long for local model, routing to OpenRouter")
             # Try OpenRouter as fallback / long-prompt primary
             if self.openrouter.is_available():
                 response = self.openrouter.generate(prompt, max_tokens=max_tokens)

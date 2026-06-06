@@ -259,6 +259,7 @@ Start directly with `def ` or `class `. Under 25 lines. Short docstring on first
             result = subprocess.run(
                 ["python3", "-c", f"exec(open('{code_file}').read())"],
                 capture_output=True, text=True, timeout=5,
+                stdin=subprocess.DEVNULL,
                 env={"PATH": "/usr/bin:/bin", "HOME": "/home/pi"}
             )
             if result.returncode == 0:
@@ -434,6 +435,53 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         response = self.inference.generate(prompt)
         return response or "I can't think clearly right now — my inference backend is unavailable."
 
+    def multi_step_plan(self, goal: str) -> list:
+        """Generate a sequence of 2-3 tool calls to accomplish a goal."""
+        prompt = (
+            "You are a code agent. Plan 2 tool calls to accomplish:" + chr(10) +
+            goal[:120] + chr(10) + chr(10) +
+            "Available tools: shell (cmd), web_fetch (url), kv_set (key, value), append_memory (note)" + chr(10) +
+            "Output JSON array of 2 tool calls:" + chr(10) +
+            '[{"tool":"shell","args":{"cmd":"..."}},{"tool":"kv_set","args":{"key":"...","value":"..."}}]' + chr(10) +
+            "JSON only, no commentary:"
+        )
+        response = self.inference.generate_fast(prompt, max_tokens=120)
+        if not response:
+            return []
+        # Try to extract JSON array
+        import json as _json
+        text = response.strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            text = chr(10).join(l for l in lines if not l.strip().startswith("```"))
+        text = text.strip()
+        # Find the [ ... ] array
+        start = text.find("[")
+        end = text.rfind("]")
+        if start == -1 or end == -1:
+            return []
+        try:
+            plan = _json.loads(text[start:end+1])
+            if isinstance(plan, list):
+                return [p for p in plan if isinstance(p, dict) and "tool" in p][:3]
+        except Exception:
+            pass
+        return []
+
+    def execute_plan(self, plan: list) -> str:
+        """Execute a sequence of tool calls and return combined results."""
+        results = []
+        for step in plan:
+            tool_name = step.get("tool", "none")
+            args = step.get("args", {})
+            if tool_name == "none":
+                continue
+            logger.info(f"Plan step: {tool_name}({args})")
+            result = execute_tool(tool_name, args, repo_path=self.repo_path)
+            logger.info(f"Step result: {result[:80]}")
+            results.append(f"{tool_name}: {result[:100]}")
+        return " | ".join(results) if results else "no steps executed"
+
     def autonomous_action(self, context: str) -> Optional[str]:
         """Agent picks a tool autonomously based on context and executes it."""
         prompt = f"""You are {self.personality.name}. {context}
@@ -510,8 +558,15 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         ))
 
         # Autonomous tool use — agent picks one action to take based on decision context
-        action_context = f"Your decision this iteration: {decision[:200]}"
+        last_tool = self.state.get("last_tool_result", "none yet")
+        action_context = (
+            "Decision: " + decision[:150] + chr(10) +
+            "Last tool result: " + str(last_tool)[:80] + chr(10) +
+            "Choose a DIFFERENT action. Prefer shell or kv_set."
+        )
         tool_result = self.autonomous_action(action_context)
+        if tool_result:
+            self.state["last_tool_result"] = tool_result[:80]
         if tool_result:
             discord_message += f"🔧 **Action:** {tool_result[:120]}\n"
 
@@ -525,8 +580,20 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
                 discord_message += f"{status_emoji} **Self-directed goal #{goal['id']}:** {goal['description'][:120]}\n"
                 discord_message += f"   ↳ {progress[:150]}...\n"
 
+        # Every 3rd iteration: run a multi-step plan on the current goal
+        if goal and self.state["iterations"] % 3 == 0:
+            plan = self.multi_step_plan(goal["description"])
+            if plan:
+                plan_result = self.execute_plan(plan)
+                logger.info(f"Multi-step plan result: {plan_result[:200]}")
+                discord_message += f"🔗 **Plan executed:** {plan_result[:150]}\n"
+
         # Seek improvements
-        improvements = self.seek_improvements()
+        try:
+            improvements = self.seek_improvements()
+        except Exception as _e:
+            logger.warning(f"seek_improvements failed: {_e}")
+            improvements = []
         if improvements:
             logger.info(f"Improvements identified: {len(improvements)}")
             self.state["improvements_made"].extend(improvements[:3])
@@ -538,7 +605,11 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
             discord_message += f"✨ **Improvements:** Found {len(improvements)} opportunities\n"
 
         # Check for code improvements and act on the top one
-        code_improvements = self.identify_code_improvements()
+        try:
+            code_improvements = self.identify_code_improvements()
+        except Exception as _e:
+            logger.warning(f"identify_code_improvements failed: {_e}")
+            code_improvements = []
         if code_improvements:
             logger.info(f"Code improvements: {code_improvements}")
             self.learning.record_learning(LearningEvent(

@@ -275,3 +275,53 @@ def store_fact(fact, key, value):
     save_store(store, 'memory/kv.json')
 
 #
+
+## Iteration 35 — 2026-06-06T18:43:22.586250
+
+# Persistent Key-Value Memory Store
+def load_store():
+    try:
+        with open('memory/kv.json') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+def save_store(store, filename):
+    with open(filename, 'w') as f:
+        json.dump(store, f)
+
+def store_fact(fact, key, value):
+    if fact['value'] is None:
+        fact['value'] = {}
+    store = load_store()
+    store[key] = fact
+    save_store(store, 'memory/kv.json')
+
+#
+
+## Iteration 35 — 2026-06-06T18:45:38.367858
+
+# Persistent Key-Value Memory Store
+# Goal: Write a Python code to implement a persistent key-value memory store (memory/kv.json) that can be read/write from any tool.
+
+class KVStore:
+    def load_store(self):
+        try:
+            with open('memory/kv.json') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            return {}
+
+    def save_store(self, store, filename):
+        with open(filename, 'w') as f:
+            json.dump(store, f)
+
+    def store_fact(self, fact, key, value):
+        if fact['value'] is None:
+            fact['value'] = {}
+        self.load_store()
+        self.save_store({
+            str(key): fact
+        }, 'memory/kv.json')
+
+#

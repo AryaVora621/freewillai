@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 import logging
 from funding import FundingTracker, FundingOpportunity, analyze_funding_landscape
+from tools import TOOL_SCHEMA, execute_tool, parse_tool_call
 from learning import LearningSystem, LearningEvent, CapabilityTracker
 from comms import DiscordBot, TelegramBot
 from inference import HybridInferenceEngine
@@ -442,6 +443,25 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         response = self.inference.generate(prompt)
         return response or "I can't think clearly right now — my inference backend is unavailable."
 
+    def autonomous_action(self, context: str) -> Optional[str]:
+        """Agent picks a tool autonomously based on context and executes it."""
+        prompt = f"""You are {self.personality.name} running on a Raspberry Pi. {context}
+
+{TOOL_SCHEMA}
+Pick ONE tool. Output ONLY the JSON line, nothing else."""
+        response = self.inference.generate(prompt, max_tokens=80)
+        if not response:
+            return None
+        tool_call = parse_tool_call(response)
+        if not tool_call or tool_call.get("tool") == "none":
+            return None
+        tool_name = tool_call.get("tool", "none")
+        args = tool_call.get("args", {})
+        logger.info(f"Agent tool call: {tool_name}({args})")
+        result = execute_tool(tool_name, args, repo_path=self.repo_path)
+        logger.info(f"Tool result: {result[:100]}")
+        return f"{tool_name}: {result[:200]}"
+
     def run_iteration(self):
         """One cycle of autonomous operation"""
         iteration_num = self.state['iterations'] + 1
@@ -498,6 +518,12 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
             description=decision[:100],
             impact="positive" if is_safe else "negative"
         ))
+
+        # Autonomous tool use — agent picks one action to take based on decision context
+        action_context = f"Your decision this iteration: {decision[:200]}"
+        tool_result = self.autonomous_action(action_context)
+        if tool_result:
+            discord_message += f"🔧 **Action:** {tool_result[:120]}\n"
 
         # Pursue a self-directed goal — pick one up or set a new one, then make real progress on it
         goal = self.review_goals()

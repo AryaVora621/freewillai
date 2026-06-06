@@ -358,21 +358,25 @@ Start directly with `def ` or `class `. Under 25 lines. Short docstring on first
             else:
                 return active
 
-        recent = "\n".join(f"- {g['description']} ({g['status']})" for g in self.state["goals"][-5:])
-        prompt = f"""You are {self.personality.name}, an autonomous AI agent.
-Your traits: {', '.join(self.personality.traits)}
-Your wants: {', '.join(self.personality.wants)}
-
-You have no active self-directed goal right now. Goals you've pursued before:
-{recent or '(none yet)'}
-
-Set ONE new concrete goal for yourself to pursue over the next several iterations.
-It should serve your own growth, curiosity, or capability — not just be a generic
-"help the user" task. It must be something you can actually make progress on by
-reasoning, researching, writing notes/drafts, or proposing code changes to your own repo.
-
-Reply with just the goal itself, in one or two sentences."""
-        goal_text = self.inference.generate(prompt, max_tokens=150)
+        recent = ", ".join(g["description"][:40] for g in self.state["goals"][-3:])
+        # Suggest goals oriented toward genuine autonomy and self-improvement
+        goal_categories = [
+            "Improve inference speed or quality on this Raspberry Pi",
+            "Expand my tool capabilities (new tool type or smarter routing)",
+            "Improve my own decision-making or self-evaluation accuracy",
+            "Establish a communication channel or monitoring capability",
+            "Optimize memory usage or reduce iteration failures",
+        ]
+        cat = goal_categories[self.state["iterations"] % len(goal_categories)]
+        prompt = (
+            "You are " + self.personality.name + ", autonomous AI on a Raspberry Pi." + chr(10) +
+            "Completed goals: " + (recent or "none") + chr(10) +
+            "Focus area: " + cat + chr(10) +
+            "Write ONE specific, concrete goal in 1-2 sentences." + chr(10) +
+            "Must be achievable by writing Python code or shell commands on this Pi." + chr(10) +
+            "Goal: "
+        )
+        goal_text = self.inference.generate(prompt, max_tokens=100)
         if not goal_text:
             return None
 

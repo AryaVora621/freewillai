@@ -647,9 +647,20 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
             logger.warning(f"seek_improvements failed: {_e}")
             improvements = []
         if improvements:
-            logger.info(f"Improvements identified: {len(improvements)}")
-            self.state["improvements_made"].extend(improvements[:3])
-            self.state["improvements_made"] = self.state["improvements_made"][-100:]
+            # Filter: only short actionable lines, reject tables/refusals/blanks
+            skip_patterns = ["|", "**", "I can't", "I cannot", "Estimated", "Difficulty", "---", "```", "* **"]
+            clean = [
+                i.strip() for i in improvements
+                if (i.strip()
+                    and len(i.strip()) < 120
+                    and not any(i.strip().startswith(p) for p in skip_patterns)
+                    and "illegal" not in i.lower()
+                    and "harmful" not in i.lower())
+            ]
+            clean = clean[:3]
+            logger.info(f"Improvements identified: {len(clean)} (filtered from {len(improvements)})")
+            self.state["improvements_made"].extend(clean)
+            self.state["improvements_made"] = self.state["improvements_made"][-50:]
             self.learning.record_learning(LearningEvent(
                 event_type="improvement",
                 description=f"Identified {len(improvements)} improvements"

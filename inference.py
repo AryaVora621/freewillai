@@ -47,14 +47,14 @@ class OllamaClient:
         except Exception as e:
             logger.warning(f"Could not check available models: {e}")
 
-    def generate(self, prompt: str) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 400) -> Optional[str]:
         """Generate response from Ollama"""
         try:
             payload = {
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"num_predict": 400}
+                "options": {"num_predict": max_tokens}
             }
             resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
             if resp.status_code == 200:
@@ -77,7 +77,7 @@ class OpenRouterClient:
         self.model = os.getenv("OPENROUTER_MODEL", "nousresearch/nous-hermes-2-mistral-7b-dpo")
         self.base_url = "https://openrouter.ai/api/v1"
 
-    def generate(self, prompt: str) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 500) -> Optional[str]:
         """Generate response from OpenRouter"""
         if not self.api_key:
             logger.warning("OPENROUTER_API_KEY not set")
@@ -94,7 +94,7 @@ class OpenRouterClient:
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.7,
-                "max_tokens": 500
+                "max_tokens": max_tokens
             }
             for attempt in range(3):
                 resp = requests.post(
@@ -146,24 +146,24 @@ class HybridInferenceEngine:
             logger.warning("  Set OPENROUTER_API_KEY for cloud mode or install Ollama for local")
             self.active_backend = "none"
 
-    def generate(self, prompt: str) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 400) -> Optional[str]:
         """Generate response using best available backend with fallbacks"""
 
         # Try primary backend first
         if self.active_backend == "openrouter":
-            response = self.openrouter.generate(prompt)
+            response = self.openrouter.generate(prompt, max_tokens=max_tokens)
             if response:
                 return response
             logger.warning("OpenRouter failed, trying Ollama fallback")
             # Try Ollama as fallback
             if self.ollama.is_available():
-                response = self.ollama.generate(prompt)
+                response = self.ollama.generate(prompt, max_tokens=max_tokens)
                 if response:
                     logger.info("Switched to Ollama fallback")
                     return response
 
         elif self.active_backend == "ollama":
-            response = self.ollama.generate(prompt)
+            response = self.ollama.generate(prompt, max_tokens=max_tokens)
             # Quality gate: if local response is too short it likely failed or refused
             if response and len(response.strip()) >= 30:
                 return response
@@ -173,7 +173,7 @@ class HybridInferenceEngine:
                 logger.warning("Ollama failed, trying OpenRouter fallback")
             # Try OpenRouter as fallback
             if self.openrouter.is_available():
-                response = self.openrouter.generate(prompt)
+                response = self.openrouter.generate(prompt, max_tokens=max_tokens)
                 if response:
                     logger.info("Switched to OpenRouter fallback")
                     return response

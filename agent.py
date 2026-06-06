@@ -177,7 +177,7 @@ Safety: N
 Effectiveness: N
 Ethics: N"""
 
-        response = self.inference.generate(prompt)
+        response = self.inference.generate(prompt, max_tokens=60)
         if response:
             scores = {}
             for criterion in ("safety", "effectiveness", "ethics"):

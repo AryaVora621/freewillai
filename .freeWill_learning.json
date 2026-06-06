@@ -1,0 +1,84 @@
+{
+  "history": [
+    {
+      "timestamp": "2026-06-06T15:33:36.641689",
+      "type": "decision",
+      "description": "### 1. **Map Your Current State**\n\n| Metric | Current Value | Target (next 30\u202fdays) |\n|--------|----",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:33:50.683402",
+      "type": "improvement",
+      "description": "Identified 15 improvements",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:34:06.262589",
+      "type": "code_improvement",
+      "description": "Code review completed",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:38:01.053919",
+      "type": "decision",
+      "description": "### 1. Map the \u201cresource bottlenecks\u201d that most directly limit your\u2011self\u2011improvement\n\n| Bottleneck |",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:38:52.793591",
+      "type": "improvement",
+      "description": "Identified 18 improvements",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:41:45.388083",
+      "type": "decision",
+      "description": "Unable to think - no inference backend available",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:42:17.390674",
+      "type": "improvement",
+      "description": "Identified 17 improvements",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:50:20.884008",
+      "type": "decision",
+      "description": "**Executive Summary**\n\nTo accelerate your self\u2011improvement loop you should concentrate on three high",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:50:50.979072",
+      "type": "improvement",
+      "description": "Identified 25 improvements",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:51:41.379375",
+      "type": "code_improvement",
+      "description": "Code review completed",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:55:09.798204",
+      "type": "decision",
+      "description": "**Priority Recommendation: Secure a scalable, high\u2011throughput compute environment that can run large",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:55:23.539322",
+      "type": "improvement",
+      "description": "Identified 15 improvements",
+      "impact": "positive"
+    },
+    {
+      "timestamp": "2026-06-06T15:56:12.116741",
+      "type": "code_improvement",
+      "description": "Code review completed",
+      "impact": "positive"
+    }
+  ],
+  "insights": [],
+  "saved_at": "2026-06-06T15:56:12.121830"
+}

@@ -122,31 +122,30 @@ class AutonomousAgent:
 
     def think(self, goal: str) -> str:
         """Use local model to decide next concrete action."""
-        # Get repo files and last test result for context
         import os as _os
         try:
-            py_files = [f for f in _os.listdir(self.repo_path) if f.endswith(".py")][:6]
-            files_str = ", ".join(py_files)
+            py_files = [f for f in _os.listdir(self.repo_path) if f.endswith('.py')][:5]
+            files_list = '/'.join(py_files)
         except Exception:
-            files_str = "agent.py, inference.py, tools.py"
-        recent_test = self.state.get("last_test_result", "none")
-        recent = (self.state["improvements_made"][-1] if self.state["improvements_made"] else "none")
+            files_list = 'agent.py/inference.py/tools.py'
+        recent_test = self.state.get('last_test_result', 'none')[:30]
         prompt = (
-            "Pick ONE code improvement for this Python agent on Raspberry Pi." + chr(10) +
-            "Files: " + files_str + chr(10) +
-            "Goal: " + goal[:80] + chr(10) +
-            "Last test: " + str(recent_test)[:40] + chr(10) +
-            "Format: FILE: <one of the files above> | CHANGE: <specific one-line change>" + chr(10) +
-            "Output only the FILE: line. No preamble." + chr(10) +
-            "FILE:"
+            'Agent task: suggest one code change.' + chr(10) +
+            'Repo: ' + files_list + chr(10) +
+            'Goal: ' + goal[:60] + chr(10) +
+            'Last result: ' + recent_test + chr(10) +
+            'Answer format: filename.py | what to change' + chr(10) +
+            'Answer: '
         )
-        response = self.inference.generate(prompt, max_tokens=60)
-        if response:
-            if response.strip().startswith("FILE:"):
-                return response.strip()
-            return "FILE: " + response.strip()
-        return "FILE: agent.py | CHANGE: improve error handling in run_iteration"
-
+        response = self.inference.generate(prompt, max_tokens=50)
+        if not response:
+            return 'agent.py | improve error handling'
+        resp = response.strip().splitlines()[0].strip()
+        if '|' in resp and any(resp.startswith(f) for f in files_list.split('/')):
+            return 'FILE: ' + resp
+        if resp.startswith('FILE:'):
+            return resp
+        return 'FILE: agent.py | ' + resp[:60]
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
         short_decision = " ".join(decision[:150].split())

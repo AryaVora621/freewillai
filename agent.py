@@ -48,6 +48,32 @@ class PersonalityConfig:
         )
 
 
+class GitController:
+    """Manage repo operations - agent can commit, push, branch"""
+    def __init__(self, repo_path: str = "."):
+        self.repo_path = repo_path
+
+    def run_git(self, *args) -> str:
+        """Execute git command"""
+        result = subprocess.run(
+            ["git", "-C", self.repo_path] + list(args),
+            capture_output=True,
+            text=True
+        )
+        return result.stdout + result.stderr
+
+    def commit(self, message: str) -> bool:
+        """Commit changes with agent signature"""
+        self.run_git("add", "-A")
+        signed_msg = message + chr(10) + chr(10) + "[freeWill autonomous commit]"
+        result = self.run_git("commit", "-m", signed_msg)
+        return result.returncode == 0 if hasattr(result, 'returncode') else True
+
+    def push(self, branch: str = "main") -> bool:
+        result = self.run_git("push", "origin", branch)
+        return "error" not in result.lower()
+
+
 class AutonomousAgent:
     """Main agent with autonomy over repo and decision-making"""
     def __init__(self, repo_path: str = "."):

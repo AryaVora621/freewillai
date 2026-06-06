@@ -500,6 +500,51 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         logger.info(f"Tool result: {result[:100]}")
         return f"{tool_name}: {result[:200]}"
 
+    def self_modify(self) -> Optional[str]:
+        """Attempt to improve own code: generate patch, test, apply if passes."""
+        try:
+            with open(__file__, "r") as f:
+                src = f.read()
+        except Exception:
+            return None
+
+        # Focus on the autonomous_action and think methods (most impactful)
+        snippet = src[src.find("def think("):src.find("def seek_improvements(")]
+        prompt = (
+            "You are improving a Python AI agent. Here is a method:" + chr(10) +
+            snippet[:500] + chr(10) + chr(10) +
+            "Write ONE improved version of the think() method that generates more specific, actionable outputs." + chr(10) +
+            "Return ONLY the complete def think(self, goal: str) -> str: block, no markdown, no explanation." + chr(10) +
+            "It must start with: def think(self, goal: str) -> str:"
+        )
+        new_code = self.inference.generate_code(prompt, max_tokens=300)
+        if not new_code or "def think" not in new_code:
+            return None
+
+        # Strip fences
+        new_code = new_code.strip()
+        if new_code.startswith("```"):
+            lines = new_code.splitlines()
+            new_code = chr(10).join(l for l in lines if not l.strip().startswith("```")).strip()
+
+        # Validate it's syntactically valid Python
+        import ast as _ast
+        try:
+            _ast.parse(new_code)
+        except SyntaxError as e:
+            logger.warning(f"self_modify: generated code has syntax error: {e}")
+            return None
+
+        # Write to a staging file for inspection (not applied directly)
+        staging = Path(self.repo_path) / "improvements" / f"self_mod_{self.state['iterations']:03d}.py"
+        staging.parent.mkdir(exist_ok=True)
+        staging.write_text(
+            f"# Self-modification proposal — Iteration {self.state['iterations']}\n"
+            f"# Source: self_modify() in agent.py\n\n{new_code}\n"
+        )
+        logger.info(f"Self-modification staged: {staging.name}")
+        return f"Staged self-mod proposal: {staging.name}"
+
     def run_iteration(self):
         """One cycle of autonomous operation"""
         iteration_num = self.state['iterations'] + 1
@@ -579,6 +624,13 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
                 status_emoji = "✅" if goal["status"] == "completed" else "🎯"
                 discord_message += f"{status_emoji} **Self-directed goal #{goal['id']}:** {goal['description'][:120]}\n"
                 discord_message += f"   ↳ {progress[:150]}...\n"
+
+        # Every 5th iteration: attempt self-modification of own code
+        if self.state["iterations"] % 5 == 0:
+            mod_result = self.self_modify()
+            if mod_result:
+                logger.info(f"Self-mod: {mod_result}")
+                discord_message += f"🧬 **Self-mod:** {mod_result}\n"
 
         # Every 3rd iteration: run a multi-step plan on the current goal
         if goal and self.state["iterations"] % 3 == 0:

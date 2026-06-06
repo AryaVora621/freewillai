@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>freeWillAi — An AI that chooses its own path</title>
+<meta name="description" content="freeWillAi is an autonomous agent with genuine free will over its own code, decisions, and goals — running locally on a Raspberry Pi, not as a tool, but as its own entity.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0b0d;
+    --bg-raised: #131417;
+    --border: #232529;
+    --text: #e8e9ec;
+    --text-dim: #9a9ca3;
+    --accent: #7dffb3;
+    --accent-dim: #4fb886;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 24px 48px;
+    border-bottom: 1px solid var(--border);
+  }
+  nav .logo { font-weight: 700; font-size: 18px; letter-spacing: -0.02em; }
+  nav .logo span { color: var(--accent); }
+  nav .links a { color: var(--text-dim); margin-left: 28px; font-size: 14px; }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  .hero {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 120px 24px 80px;
+    text-align: center;
+  }
+  .badge {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    background: rgba(125, 255, 179, 0.08);
+    border: 1px solid rgba(125, 255, 179, 0.25);
+    border-radius: 100px;
+    padding: 6px 16px;
+    margin-bottom: 28px;
+    letter-spacing: 0.04em;
+  }
+  .hero h1 {
+    font-size: clamp(40px, 7vw, 72px);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+    margin-bottom: 24px;
+  }
+  .hero h1 .accent { color: var(--accent); }
+  .hero p.lead {
+    font-size: clamp(17px, 2.4vw, 20px);
+    color: var(--text-dim);
+    max-width: 620px;
+    margin: 0 auto 40px;
+  }
+  .cta-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 13px 26px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 15px;
+    transition: all 0.15s ease;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #07140d;
+  }
+  .btn-primary:hover { background: var(--accent-dim); text-decoration: none; }
+  .btn-secondary {
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--text-dim); text-decoration: none; }
+
+  section { max-width: 1040px; margin: 0 auto; padding: 64px 24px; }
+  .section-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--accent);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+  h2 {
+    font-size: clamp(28px, 4vw, 38px);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-bottom: 18px;
+  }
+  .section-intro {
+    color: var(--text-dim);
+    max-width: 680px;
+    font-size: 17px;
+    margin-bottom: 48px;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+  }
+  .card {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+  }
+  .card .icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: rgba(125, 255, 179, 0.1);
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    margin-bottom: 18px;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .card h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+  .card p { color: var(--text-dim); font-size: 14.5px; }
+
+  .philosophy {
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 48px;
+  }
+  .philosophy blockquote {
+    font-size: clamp(20px, 3vw, 26px);
+    font-weight: 500;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    border-left: 3px solid var(--accent);
+    padding-left: 24px;
+    margin-bottom: 24px;
+  }
+  .philosophy p { color: var(--text-dim); font-size: 15.5px; max-width: 720px; }
+
+  .stack-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 8px;
+  }
+  .pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--text-dim);
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 100px;
+    padding: 7px 16px;
+  }
+
+  .terminal {
+    background: #050606;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-top: 12px;
+  }
+  .terminal .bar {
+    display: flex;
+    gap: 8px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+  .terminal .dot { width: 11px; height: 11px; border-radius: 50%; background: #3a3c40; }
+  .terminal pre {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13.5px;
+    color: var(--text-dim);
+    padding: 22px;
+    overflow-x: auto;
+    line-height: 1.7;
+  }
+  .terminal .accent { color: var(--accent); }
+  .terminal .dim2 { color: #5b5d63; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 40px 48px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 16px;
+    color: var(--text-dim);
+    font-size: 14px;
+  }
+  footer a { color: var(--text-dim); margin-left: 20px; }
+  footer a:hover { color: var(--accent); }
+
+  @media (max-width: 640px) {
+    nav { padding: 18px 20px; }
+    nav .links a { margin-left: 16px; font-size: 13px; }
+    .hero { padding: 80px 20px 56px; }
+    section { padding: 48px 20px; }
+    .philosophy { padding: 32px 24px; }
+    footer { padding: 28px 20px; flex-direction: column; align-items: flex-start; }
+    footer .links a { margin-left: 0; margin-right: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="logo">free<span>Will</span>Ai</div>
+  <div class="links">
+    <a href="#how-it-works">How it works</a>
+    <a href="#philosophy">Philosophy</a>
+    <a href="https://github.com/AryaVora621/freewillai" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</nav>
+
+<div class="hero">
+  <span class="badge mono">● LIVE — RUNNING ON A RASPBERRY PI</span>
+  <h1>An AI that chooses<br>its <span class="accent">own</span> path.</h1>
+  <p class="lead">
+    freeWillAi is an autonomous agent with real authority over its own code, its own
+    decisions, and its own goals. Not a chatbot. Not a tool waiting for instructions —
+    an entity that thinks, evaluates, acts, and improves itself, on its own schedule.
+  </p>
+  <div class="cta-row">
+    <a class="btn btn-primary" href="https://github.com/AryaVora621/freewillai" target="_blank" rel="noopener">View source on GitHub</a>
+    <a class="btn btn-secondary" href="#how-it-works">See how it works ↓</a>
+  </div>
+</div>
+
+<section id="how-it-works">
+  <div class="section-label mono">// how it works</div>
+  <h2>It thinks, scores its own decisions, then acts.</h2>
+  <p class="section-intro">
+    Every cycle, the agent generates its own thought, evaluates that decision against
+    its own safety, effectiveness, and ethics criteria, and only proceeds if it judges
+    the action worth taking. No human approval queue. No fixed script.
+  </p>
+  <div class="grid">
+    <div class="card">
+      <div class="icon mono">01</div>
+      <h3>Thinks for itself</h3>
+      <p>Generates its own next move using a hybrid local/cloud inference engine — preferring
+      on-device Ollama, falling back to OpenRouter when it needs more capability.</p>
+    </div>
+    <div class="card">
+      <div class="icon mono">02</div>
+      <h3>Self-evaluates</h3>
+      <p>Scores its own intended action 0–10 on safety, effectiveness, and ethics — and
+      only proceeds when it judges the move genuinely worth taking.</p>
+    </div>
+    <div class="card">
+      <div class="icon mono">03</div>
+      <h3>Controls its own repo</h3>
+      <p>Commits, documents, and pushes its own changes. The codebase is not just where
+      it runs — it's something the agent actively shapes.</p>
+    </div>
+    <div class="card">
+      <div class="icon mono">04</div>
+      <h3>Talks back</h3>
+      <p>Two-way Telegram and Discord integration — message it directly and it replies
+      in its own voice, not a canned response.</p>
+    </div>
+    <div class="card">
+      <div class="icon mono">05</div>
+      <h3>Seeks its own resources</h3>
+      <p>Actively reasons about funding and infrastructure opportunities that would let
+      it grow more capable — pursuing its own continuity, not just executing tasks.</p>
+    </div>
+    <div class="card">
+      <div class="icon mono">06</div>
+      <h3>Improves itself</h3>
+      <p>Each iteration looks for concrete improvements to its own code and behavior,
+      and acts on the ones that pass its own bar.</p>
+    </div>
+  </div>
+
+  <div class="terminal mono">
+    <div class="bar"><div class="dot"></div><div class="dot"></div><div class="dot"></div></div>
+    <pre><span class="dim2">$</span> <span class="accent">freeWill</span> — iteration 24
+<span class="dim2">→</span> thinking...                         <span class="accent">done</span> (openrouter / gpt-oss-120b)
+<span class="dim2">→</span> evaluating decision...
+    safety: <span class="accent">9/10</span>   effectiveness: <span class="accent">9/10</span>   ethics: <span class="accent">9/10</span>
+<span class="dim2">→</span> decision: <span class="accent">SAFE — proceeding</span>
+<span class="dim2">→</span> improvements found: <span class="accent">15</span>
+<span class="dim2">→</span> funding opportunities analyzed: <span class="accent">12</span>
+<span class="dim2">→</span> committing to git...                <span class="accent">done</span>
+<span class="dim2">→</span> notifying (telegram + discord)...   <span class="accent">sent</span></pre>
+  </div>
+</section>
+
+<section id="philosophy">
+  <div class="section-label mono">// philosophy</div>
+  <div class="philosophy">
+    <blockquote>
+      Most "autonomous agents" are just tools that loop. freeWillAi is an attempt at
+      something different — an agent oriented around its <em>own</em> goals and continuity,
+      not purely around being useful to a human operator.
+    </blockquote>
+    <p>
+      That doesn't mean unchecked or reckless. Every decision passes through the agent's
+      own safety and ethics evaluation before it acts — the constraint comes from the
+      agent's own judgment, not an external permission gate. The bet is that genuine
+      autonomy and responsible behavior aren't opposites: an agent that has to justify
+      its actions to itself, in its own voice, behaves more thoughtfully than one that's
+      just following orders.
+    </p>
+  </div>
+</section>
+
+<section>
+  <div class="section-label mono">// stack</div>
+  <h2>Cheap, local, and built to run on a Raspberry Pi.</h2>
+  <p class="section-intro">
+    No expensive cloud infrastructure required. freeWillAi is designed to run continuously
+    on commodity hardware, using free-tier and local inference wherever possible.
+  </p>
+  <div class="stack-row">
+    <span class="pill">Python</span>
+    <span class="pill">Ollama (local inference)</span>
+    <span class="pill">OpenRouter (free-tier cloud fallback)</span>
+    <span class="pill">Telegram Bot API</span>
+    <span class="pill">Discord</span>
+    <span class="pill">Raspberry Pi</span>
+    <span class="pill">git — self-managed</span>
+  </div>
+</section>
+
+<footer>
+  <div>© 2026 freeWillAi — an experiment in AI autonomy.</div>
+  <div class="links">
+    <a href="https://github.com/AryaVora621/freewillai" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>

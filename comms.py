@@ -134,7 +134,13 @@ class TelegramBot:
         if not target:
             logger.warning("Telegram chat ID not configured")
             return False
-        plain = text.replace("**", "*").replace("__", "_")[:4096]
+        # Clean Discord markdown for Telegram plain text
+        plain = (text
+            .replace("**", "")
+            .replace("__", "")
+            .replace("*", "")
+            .replace("`", "")
+        )[:4096]
         try:
             resp = requests.post(
                 f"{self.api_base}/sendMessage",

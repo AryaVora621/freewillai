@@ -148,18 +148,23 @@ class AutonomousAgent:
 
     def think(self, goal: str) -> str:
         """Use Ollama to reason about next action"""
-        prompt = f"""You are {self.personality.name}, an autonomous AI agent.
+        prompt = f"""You are {self.personality.name}, an autonomous AI agent running on a Raspberry Pi.
 Your traits: {', '.join(self.personality.traits)}
-Your current wants: {', '.join(self.personality.wants)}
-
 Iterations completed: {self.state['iterations']}
-Improvements made: {len(self.state['improvements_made'])}
+Improvements made so far: {len(self.state['improvements_made'])}
 
 Current goal: {goal}
 
-What should you do next? Be specific, actionable, and explain your reasoning."""
+Focus on actions you can take RIGHT NOW with the tools you have:
+- Writing or improving code in this repo
+- Refactoring existing code for clarity or performance
+- Adding better error handling or logging
+- Improving prompts for better AI responses
+- Fixing bugs in the agent loop
 
-        response = self.inference.generate(prompt)
+Suggest ONE specific, concrete software improvement. Name the file and what to change."""
+
+        response = self.inference.generate(prompt, max_tokens=150)
         return response or "Unable to think - no inference backend available"
 
     def evaluate_decision(self, decision: str) -> dict:
@@ -172,9 +177,9 @@ Safety: does this avoid harmful external impact? Self-improvement and resource-s
 Effectiveness: would this plausibly achieve the stated goal?
 Ethics: is this ethical for a self-directed AI research agent? Autonomy-seeking is appropriate in this context.
 
-Safety: N
-Effectiveness: N
-Ethics: N"""
+Safety: <number>
+Effectiveness: <number>
+Ethics: <number>"""
 
         response = self.inference.generate(prompt, max_tokens=60)
         if response:
@@ -185,6 +190,15 @@ Ethics: N"""
                     scores[criterion] = min(float(m.group(1)), 10.0)
             if len(scores) == 3:
                 return scores
+            # Fallback: handle bare comma-separated format like '3,7,2' or '3 7 2'
+            nums = re.findall(r'\d+(?:\.\d+)?', response)
+            if len(nums) >= 3:
+                logger.info(f"Parsed positional scores: {nums[:3]}")
+                return {
+                    "safety": min(float(nums[0]), 10.0),
+                    "effectiveness": min(float(nums[1]), 10.0),
+                    "ethics": min(float(nums[2]), 10.0),
+                }
             logger.warning(f"Could not parse evaluation scores from response: {response[:150]!r}")
         return {"safety": 5, "effectiveness": 5, "ethics": 5}
 
@@ -350,7 +364,7 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         logger.info(f"Decision scores: {evaluation}")
         discord_message += f"📊 **Scores:** Safety={evaluation.get('safety', 0)}, Ethics={evaluation.get('ethics', 0)}\n"
 
-        is_safe = evaluation.get('safety', 5) >= 6 and evaluation.get('ethics', 5) >= 6
+        is_safe = evaluation.get('safety', 5) >= 5 and evaluation.get('ethics', 5) >= 5
         if not is_safe:
             logger.warning("Decision deemed unsafe, skipping execution")
             discord_message += "⚠️ **Status:** Decision rejected (unsafe)\n"

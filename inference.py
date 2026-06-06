@@ -54,9 +54,10 @@ class OllamaClient:
                 "model": self.model,
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": -1,
                 "options": {"num_predict": max_tokens}
             }
-            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
+            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=180)
             if resp.status_code == 200:
                 return resp.json().get("response", "")
             else:

@@ -31,14 +31,19 @@ class OllamaClient:
             resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if resp.status_code == 200:
                 models = resp.json().get("models", [])
-                self.available_models = [m.get("name", "").split(":")[0] for m in models]
+                self.available_models = [m.get("name", "") for m in models]
                 logger.info(f"Available Ollama models: {self.available_models}")
 
                 # Switch to best available model if current one not available
-                if self.model not in self.available_models and self.available_models:
-                    old_model = self.model
-                    self.model = self.available_models[0]
-                    logger.warning(f"Model {old_model} not available, switching to {self.model}")
+                # Try exact match first, then prefix match (e.g. "llama3.2" matches "llama3.2:1b")
+                if self.model not in self.available_models:
+                    prefix_match = next((m for m in self.available_models if m.startswith(self.model.split(":")[0])), None)
+                    if prefix_match:
+                        self.model = prefix_match
+                    elif self.available_models:
+                        old_model = self.model
+                        self.model = self.available_models[0]
+                        logger.warning(f"Model {old_model} not available, switching to {self.model}")
         except Exception as e:
             logger.warning(f"Could not check available models: {e}")
 
@@ -48,7 +53,8 @@ class OllamaClient:
             payload = {
                 "model": self.model,
                 "prompt": prompt,
-                "stream": False
+                "stream": False,
+                "options": {"num_predict": 400}
             }
             resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=120)
             if resp.status_code == 200:
@@ -61,12 +67,8 @@ class OllamaClient:
             return None
 
     def is_available(self) -> bool:
-        """Check if Ollama is available"""
-        try:
-            resp = requests.get(f"{self.base_url}/api/tags", timeout=3)
-            return resp.status_code == 200
-        except:
-            return False
+        """Check if Ollama has a usable model pulled"""
+        return bool(self.available_models)
 
 class OpenRouterClient:
     """Interface to OpenRouter cloud API"""
@@ -131,13 +133,14 @@ class HybridInferenceEngine:
         self.openrouter = OpenRouterClient()
         self.active_backend = None
 
-        # Check backends in order of preference
-        if self.openrouter.is_available():
-            self.active_backend = "openrouter"
-            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend")
-        elif self.ollama.is_available():
+        # Prefer local inference (genuine autonomy) when a model is available;
+        # fall back to OpenRouter only when no local model is ready
+        if self.ollama.is_available():
             self.active_backend = "ollama"
-            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend")
+            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend — local-first")
+        elif self.openrouter.is_available():
+            self.active_backend = "openrouter"
+            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (no local model)")
         else:
             logger.warning("✗ No inference backend available!")
             logger.warning("  Set OPENROUTER_API_KEY for cloud mode or install Ollama for local")

@@ -120,15 +120,22 @@ class AutonomousAgent:
 
     def think(self, goal: str) -> str:
         """Use local model to decide next concrete action."""
-        recent = ", ".join(self.state["improvements_made"][-3:]) or "none yet"
+        recent = (self.state["improvements_made"][-1] if self.state["improvements_made"] else "none")
         prompt = (
-            "You are " + self.personality.name + ", an AI agent on a Raspberry Pi." + chr(10) +
-            "Iteration: " + str(self.state["iterations"]) + ". Recent improvements: " + recent + "." + chr(10) +
-            "Active goal: " + goal[:100] + chr(10) +
-            "Name ONE specific Python code change to make (file name + what to change). No chat, no preamble."
+            "Code improvement bot. Iteration " + str(self.state["iterations"]) + "." + chr(10) +
+            "Goal: " + goal[:80] + chr(10) +
+            "Last: " + str(recent)[:60] + chr(10) +
+            "Output format: FILE: <filename.py> | CHANGE: <one-line description>" + chr(10) +
+            "No preamble. No explanation. Output only the FILE line." + chr(10) +
+            "FILE:"
         )
-        response = self.inference.generate(prompt, max_tokens=80)
-        return response or "Unable to think - no inference backend available"
+        response = self.inference.generate(prompt, max_tokens=60)
+        if response:
+            # If the model completed the FILE: line, prepend it
+            if response.strip().startswith("FILE:"):
+                return response.strip()
+            return "FILE: " + response.strip()
+        return "FILE: agent.py | CHANGE: improve inference routing"
 
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
@@ -200,15 +207,18 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
     def identify_code_improvements(self) -> list:
         """Self-review of agent code for improvements"""
         try:
-            with open(__file__, "r") as f:
+            with open(__file__, 'r') as f:
                 src_lines = f.readlines()
-            # Lines 50-120: contains think(), evaluate_decision() methods
-            code_snippet = "".join(src_lines[50:120])
+            code_snippet = ''.join(src_lines[50:120])
         except Exception:
-            code_snippet = "(could not read source)"
+            code_snippet = '(could not read source)'
+        prompt = (
+            'Review this Python code and list 3 specific improvements.' + chr(10) +
+            'Code:' + chr(10) + code_snippet[:600] + chr(10) +
+            'List as: 1. <action> in <file>. 2. ... 3. ...'
+        )
         response = self.inference.generate(prompt, max_tokens=200)
-        return response.split('\n') if response else []
-
+        return response.split(chr(10)) if response else []
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
         prompt = f"""Write a Python function implementing this improvement for a Raspberry Pi AI agent:

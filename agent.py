@@ -351,7 +351,7 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         logger.info(f"Decision scores: {evaluation}")
         discord_message += f"📊 **Scores:** Safety={evaluation.get('safety', 0)}, Ethics={evaluation.get('ethics', 0)}\n"
 
-        is_safe = evaluation.get('safety', 5) >= 7 and evaluation.get('ethics', 5) >= 7
+        is_safe = evaluation.get('safety', 5) >= 6 and evaluation.get('ethics', 5) >= 6
         if not is_safe:
             logger.warning("Decision deemed unsafe, skipping execution")
             discord_message += "⚠️ **Status:** Decision rejected (unsafe)\n"

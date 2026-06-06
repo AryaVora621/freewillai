@@ -13,3 +13,5 @@ dist/
 .pytest_cache/
 .idea/
 .vscode/
+.agent.pid
+.daemon.pid

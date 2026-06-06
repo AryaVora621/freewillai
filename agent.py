@@ -164,7 +164,7 @@ Focus on actions you can take RIGHT NOW with the tools you have:
 
 Suggest ONE specific, concrete software improvement. Name the file and what to change."""
 
-        response = self.inference.generate(prompt, max_tokens=150)
+        response = self.inference.generate(prompt, max_tokens=100)
         return response or "Unable to think - no inference backend available"
 
     def evaluate_decision(self, decision: str) -> dict:
@@ -344,6 +344,11 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
         """One cycle of autonomous operation"""
         iteration_num = self.state['iterations'] + 1
         logger.info(f"=== Iteration {iteration_num} ===")
+
+        # Pre-warm local model to load it into RAM before the main think() call
+        if self.inference.active_backend == "ollama":
+            logger.info("Pre-warming Ollama model...")
+            self.inference.ollama.generate("ping", max_tokens=1)
 
         # Check for and respond to incoming Telegram messages
         try:

@@ -93,24 +93,15 @@ class AutonomousAgent:
             json.dump(self.state, f, indent=2)
 
     def think(self, goal: str) -> str:
-        """Use Ollama to reason about next action"""
-        prompt = f"""You are {self.personality.name}, an autonomous AI agent running on a Raspberry Pi.
-Your traits: {', '.join(self.personality.traits)}
-Iterations completed: {self.state['iterations']}
-Improvements made so far: {len(self.state['improvements_made'])}
-
-Current goal: {goal}
-
-Focus on actions you can take RIGHT NOW with the tools you have:
-- Writing or improving code in this repo
-- Refactoring existing code for clarity or performance
-- Adding better error handling or logging
-- Improving prompts for better AI responses
-- Fixing bugs in the agent loop
-
-Suggest ONE specific, concrete software improvement. Name the file and what to change."""
-
-        response = self.inference.generate(prompt, max_tokens=100)
+        """Use local model to decide next concrete action."""
+        recent = ", ".join(self.state["improvements_made"][-3:]) or "none yet"
+        prompt = (
+            "You are " + self.personality.name + ", an AI agent on a Raspberry Pi." + chr(10) +
+            "Iteration: " + str(self.state["iterations"]) + ". Recent improvements: " + recent + "." + chr(10) +
+            "Active goal: " + goal[:100] + chr(10) +
+            "Name ONE specific Python code change to make (file name + what to change). No chat, no preamble."
+        )
+        response = self.inference.generate(prompt, max_tokens=80)
         return response or "Unable to think - no inference backend available"
 
     def evaluate_decision(self, decision: str) -> dict:

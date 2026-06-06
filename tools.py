@@ -137,20 +137,38 @@ def execute_tool(tool_name: str, args: dict, repo_path: str = "/home/pi/freeWill
 
 
 def parse_tool_call(response: str) -> Optional[dict]:
-    """Extract JSON tool call from LLM response text."""
-    response = response.strip()
+    """Extract JSON tool call from LLM response, handling markdown fences."""
+    if not response:
+        return None
+    text = response.strip()
+    # Strip markdown code fence
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = chr(10).join(l for l in lines if not l.strip().startswith("```"))
+    text = text.strip()
+    # Direct parse
     try:
-        obj = json.loads(response)
+        obj = json.loads(text)
         if "tool" in obj:
             return obj
     except Exception:
         pass
-    match = re.search(r'\{[^{}]+\}', response)
-    if match:
-        try:
-            obj = json.loads(match.group())
-            if "tool" in obj:
-                return obj
-        except Exception:
-            pass
+    # Find first complete JSON object (handles nested braces)
+    depth = 0
+    start = -1
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    obj = json.loads(text[start:i+1])
+                    if "tool" in obj:
+                        return obj
+                except Exception:
+                    pass
+                start = -1
     return None

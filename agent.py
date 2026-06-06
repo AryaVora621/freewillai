@@ -120,22 +120,30 @@ class AutonomousAgent:
 
     def think(self, goal: str) -> str:
         """Use local model to decide next concrete action."""
+        # Get repo files and last test result for context
+        import os as _os
+        try:
+            py_files = [f for f in _os.listdir(self.repo_path) if f.endswith(".py")][:6]
+            files_str = ", ".join(py_files)
+        except Exception:
+            files_str = "agent.py, inference.py, tools.py"
+        recent_test = self.state.get("last_test_result", "none")
         recent = (self.state["improvements_made"][-1] if self.state["improvements_made"] else "none")
         prompt = (
-            "Code improvement bot. Iteration " + str(self.state["iterations"]) + "." + chr(10) +
+            "Pick ONE code improvement for this Python agent on Raspberry Pi." + chr(10) +
+            "Files: " + files_str + chr(10) +
             "Goal: " + goal[:80] + chr(10) +
-            "Last: " + str(recent)[:60] + chr(10) +
-            "Output format: FILE: <filename.py> | CHANGE: <one-line description>" + chr(10) +
-            "No preamble. No explanation. Output only the FILE line." + chr(10) +
+            "Last test: " + str(recent_test)[:40] + chr(10) +
+            "Format: FILE: <one of the files above> | CHANGE: <specific one-line change>" + chr(10) +
+            "Output only the FILE: line. No preamble." + chr(10) +
             "FILE:"
         )
         response = self.inference.generate(prompt, max_tokens=60)
         if response:
-            # If the model completed the FILE: line, prepend it
             if response.strip().startswith("FILE:"):
                 return response.strip()
             return "FILE: " + response.strip()
-        return "FILE: agent.py | CHANGE: improve inference routing"
+        return "FILE: agent.py | CHANGE: improve error handling in run_iteration"
 
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
@@ -751,6 +759,7 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
                     improvements_dir = Path(self.repo_path) / "improvements"
                     code_file = str(improvements_dir / f"iter_{self.state['iterations'] + 1:03d}.py")
                     test_result = self.test_code_improvement(code_file)
+                    self.state["last_test_result"] = test_result[:60]
                     discord_message += f"💻 **Code written + tested:** {test_result[:100]}\n"
 
         # Check funding opportunities

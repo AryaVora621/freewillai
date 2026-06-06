@@ -272,10 +272,12 @@ Start directly with `def ` or `class `. Under 25 lines. Short docstring on first
         # Strip any accidental markdown wrapping
         code = code.strip()
         if code.startswith("```"):
-            code = re.sub(r"^```[a-zA-Z]*
-?", "", code)
-            code = re.sub(r"
-?```$", "", code)
+            lines = code.splitlines()
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            code = "\n".join(lines).strip()
 
         improvements_dir = Path(self.repo_path) / "improvements"
         improvements_dir.mkdir(exist_ok=True)
@@ -451,11 +453,10 @@ Reply naturally and in your own voice, thoughtfully and concisely (2-4 sentences
 
     def autonomous_action(self, context: str) -> Optional[str]:
         """Agent picks a tool autonomously based on context and executes it."""
-        prompt = f"""You are {self.personality.name} running on a Raspberry Pi. {context}
+        prompt = f"""You are {self.personality.name}. {context}
 
-{TOOL_SCHEMA}
-Pick ONE tool. Output ONLY the JSON line, nothing else."""
-        response = self.inference.generate(prompt, max_tokens=80)
+{TOOL_SCHEMA}"""
+        response = self.inference.generate_fast(prompt, max_tokens=60)
         if not response:
             return None
         tool_call = parse_tool_call(response)

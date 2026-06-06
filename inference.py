@@ -83,12 +83,29 @@ class OllamaClient:
 
 class OpenRouterClient:
     """Interface to OpenRouter cloud API"""
+
+    # Free models that support structured/JSON output, in preference order
+    FREE_MAIN_MODELS = [
+        "openai/gpt-oss-120b:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "nvidia/nemotron-3-8b-super:free",
+        "google/gemma-3-27b-it:free",
+        "qwen/qwen3-30b-a3b:free",
+    ]
+    FREE_CODE_MODELS = [
+        "qwen/qwen3-coder:free",
+        "openai/gpt-oss-120b:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "nvidia/nemotron-3-8b-super:free",
+    ]
+
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
-        self.model = os.getenv("OPENROUTER_MODEL", "nousresearch/nous-hermes-2-mistral-7b-dpo")
+        self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
         self.eval_model = os.getenv("OPENROUTER_EVAL_MODEL", self.model)
-        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", self.model)
+        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder:free")
         self.base_url = "https://openrouter.ai/api/v1"
+        self._rate_limited_models = set()
 
     def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None) -> Optional[str]:
         """Generate response from OpenRouter"""
@@ -125,11 +142,31 @@ class OpenRouterClient:
                     except Exception:
                         pass
                     logger.warning(f"OpenRouter rate-limited (attempt {attempt + 1}/3), waiting {wait}s")
-                    time.sleep(wait)
+                    if attempt < 2:
+                        time.sleep(wait)
                     continue
                 logger.error(f"OpenRouter error: {resp.status_code} - {resp.text}")
                 return None
-            logger.error("OpenRouter rate-limited after retries, giving up")
+            # All 3 attempts failed -- mark this model as rate-limited and try alternates
+            active_model = model or self.model
+            self._rate_limited_models.add(active_model)
+            logger.error(f"OpenRouter rate-limited after retries, giving up on {active_model}")
+            # Try a different model from the pool if available
+            all_models = self.FREE_MAIN_MODELS + self.FREE_CODE_MODELS
+            for alt in all_models:
+                if alt not in self._rate_limited_models and alt != active_model:
+                    logger.info(f"Trying alternate model: {alt}")
+                    alt_payload = dict(payload)
+                    alt_payload["model"] = alt
+                    try:
+                        alt_resp = requests.post(
+                            f"{self.base_url}/chat/completions",
+                            json=alt_payload, headers=headers, timeout=30
+                        )
+                        if alt_resp.status_code == 200:
+                            return alt_resp.json()["choices"][0]["message"]["content"]
+                    except Exception:
+                        pass
             return None
         except Exception as e:
             logger.error(f"OpenRouter connection error: {e}")

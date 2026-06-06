@@ -164,15 +164,18 @@ class HybridInferenceEngine:
 
         elif self.active_backend == "ollama":
             response = self.ollama.generate(prompt)
-            if response:
+            # Quality gate: if local response is too short it likely failed or refused
+            if response and len(response.strip()) >= 30:
                 return response
-            logger.warning("Ollama failed, trying OpenRouter fallback")
+            if response:
+                logger.warning(f"Ollama response too short ({len(response.strip())} chars), trying OpenRouter")
+            else:
+                logger.warning("Ollama failed, trying OpenRouter fallback")
             # Try OpenRouter as fallback
             if self.openrouter.is_available():
                 response = self.openrouter.generate(prompt)
                 if response:
                     logger.info("Switched to OpenRouter fallback")
-                    self.active_backend = "openrouter"
                     return response
 
         # No backend available

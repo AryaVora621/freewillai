@@ -259,17 +259,23 @@ List exactly 3 specific Python improvements (not general advice). Format each as
 
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
-        prompt = f"""You are {self.personality.name}, an AI agent writing code to improve yourself.
+        prompt = f"""Write a Python function implementing this improvement for a Raspberry Pi AI agent:
+{suggestion[:250]}
 
-Improvement to implement: {suggestion[:300]}
-
-Write a WORKING Python code snippet (function or class) that implements this improvement.
-Keep it under 30 lines. Include a brief docstring explaining what it does and why.
-Write ONLY the code, no explanation outside the code block."""
+Rules: raw Python only, no markdown, no triple backticks, no imports outside stdlib.
+Start directly with `def ` or `class `. Under 25 lines. Short docstring on first line."""
 
         code = self.inference.generate_code(prompt, max_tokens=250)
         if not code or len(code.strip()) < 20:
             return None
+
+        # Strip any accidental markdown wrapping
+        code = code.strip()
+        if code.startswith("```"):
+            code = re.sub(r"^```[a-zA-Z]*
+?", "", code)
+            code = re.sub(r"
+?```$", "", code)
 
         improvements_dir = Path(self.repo_path) / "improvements"
         improvements_dir.mkdir(exist_ok=True)

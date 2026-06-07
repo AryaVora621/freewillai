@@ -143,3 +143,35 @@ Once these artifacts are ready, we can review the findings and prioritize refact
 Once the reports are ready, we can move to targeted refactoring.
 
 ****
+
+## Iteration 74 — 2026-06-07T10:11:52.098707
+
+**Next Concrete Step – Perform Technical Analysis**
+
+1. **Clone & set up the project**  
+   ```bash
+   cd ~
+   git clone <repo‑url> pi_project
+   cd pi_project
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+2. **Run static analysis & generate reports**  
+   ```bash
+   # Install analysis tools if not present
+   pip install flake8 pylint pycallgraph
+   # Style & lint checks
+   flake8 . > flake8_report.txt
+   pylint $(git ls-files '*.py') > pylint_report.txt
+   # Call‑graph for the main entry point (replace `main.py` with your entry script)
+   pycallgraph graphviz --output-file=callgraph.png -- ./main.py
+   ```
+
+3. **Collect results**  
+   - Open `flake8_report.txt` and `pylint_report.txt` to note high‑severity warnings.  
+   - Review `callgraph.png` to spot tightly‑coupled modules or deep call stacks.
+
+These artifacts will guide the refactoring plan.

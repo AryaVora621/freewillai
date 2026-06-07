@@ -100,3 +100,46 @@ To get started, please provide me with the project repository URL (or where I ca
 Once these artifacts are ready, we can review the findings and prioritize refactoring tasks.  
 
 ****
+
+## Iteration 73 — 2026-06-07T09:58:10.515146
+
+**Next Concrete Step – Perform Technical Analysis**
+
+1. **Clone & set up the project**  
+   ```bash
+   cd ~
+   git clone <repo‑url> pi_project
+   cd pi_project
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+2. **Run static analysis**  
+   ```bash
+   # Install tools if needed
+   pip install flake8 pylint pycallgraph
+   # Style & lint checks
+   flake8 . --count --statistics
+   pylint **/*.py --exit-zero
+   ```
+
+3. **Generate a call‑graph** (optional but useful)  
+   ```bash
+   pycallgraph graphviz --output-file=callgraph.png -- python -m pytest   # or your entry script
+   ```
+
+4. **Collect results**  
+   - Save `flake8` output to `flake8_report.txt`.  
+   - Save `pylint` output to `pylint_report.txt`.  
+   - Review `callgraph.png` for hot‑spots.
+
+5. **Create a brief summary** listing:
+   - High‑severity lint warnings.  
+   - Modules with >30% cyclomatic complexity.  
+   - Any missing docstrings or type hints.
+
+Once the reports are ready, we can move to targeted refactoring.
+
+****

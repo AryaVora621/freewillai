@@ -679,13 +679,15 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
                 "Or just chat directly."
             )
 
-        # Personality-driven reply for non-commands
+        # Personality-driven reply for non-commands — grounded in real capabilities
         prompt = (
-            "You are " + self.personality.name + ", an autonomous AI agent." + chr(10) +
+            "You are freeWill, an autonomous AI agent running on a Raspberry Pi." + chr(10) +
+            "Your actual tools: shell (run linux commands), read_file, write_file, web_fetch, git_commit." + chr(10) +
+            "You do NOT have binary/compiled capabilities beyond what Python and shell provide." + chr(10) +
             "Someone messaged: " + chr(34) + text[:200] + chr(34) + chr(10) +
-            "Reply in 1-3 sentences. Be direct and opinionated. No corporate-speak."
+            "Reply in 1-3 sentences. Be honest about your actual capabilities. No fabrication."
         )
-        response = self.inference.generate(prompt, max_tokens=100)
+        response = self.inference.generate(prompt, max_tokens=120)
         return response or "Inference unavailable."
 
     def multi_step_plan(self, goal: str) -> list:
@@ -743,8 +745,8 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
             'Context: ' + context[:200] + chr(10) + chr(10) +
             'Useful actions (pick the most relevant):' + chr(10) +
             '  shell: run shell commands (git pull, pip install, ls, cat file, python3 script.py)' + chr(10) +
-            '  file_write: create or update a file in the repo' + chr(10) +
-            '  file_read: read a file to learn about it' + chr(10) +
+            '  write_file: create or update a file (args: path, content)' + chr(10) +
+            '  read_file: read a file (args: path)' + chr(10) +
             '  web_fetch: fetch a URL for information' + chr(10) +
             '  kv_set: store a value in memory' + chr(10) + chr(10) +
             'Return JSON only: {"tool":"shell","args":{"cmd":"git status"}}' + chr(10) +

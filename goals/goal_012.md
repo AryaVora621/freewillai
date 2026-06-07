@@ -245,3 +245,37 @@ These artifacts will give us a visual overview of module interactions and quanti
 *Once the reports are reviewed, we can prioritize fixes and move on to runtime testing or call‑graph generation.*
 
 ****
+
+## Iteration 77 — 2026-06-07T10:51:07.731778
+
+**Next Concrete Step – Generate a Call‑Graph and Capture Runtime Metrics**
+
+1. **Activate the venv (if not already)**  
+   ```bash
+   source venv/bin/activate
+   ```
+
+2. **Install the visualization tools**  
+   ```bash
+   pip install pycallgraph2 graphviz
+   # Ensure Graphviz binaries are installed on the Pi
+   sudo apt-get update && sudo apt-get install -y graphviz
+   ```
+
+3. **Run the call‑graph on the project’s entry point** (replace with your actual module)  
+   ```bash
+   pycallgraph graphviz --output-file=callgraph.png -- \
+       python -m my_pi_project.main
+   ```
+
+4. **Verify the output** – open `callgraph.png` with an image viewer (`eog callgraph.png`) to confirm the graph was generated correctly.
+
+5. **Commit the graph** (optional)  
+   ```bash
+   git add callgraph.png
+   git commit -m "Add initial call‑graph for technical analysis"
+   ```
+
+Proceed to review the graph for hot paths, circular imports, or unexpected dependencies.
+
+****

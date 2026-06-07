@@ -402,3 +402,44 @@ Now you have a complete, version‑controlled snapshot of code‑quality metrics
    ```
 
 Run the script above; it will produce a complete, timestamped set of static‑analysis reports ready for review or archiving.
+
+## Iteration 81 — 2026-06-07T11:40:32.525368
+
+**Next Concrete Step – Archive All Generated Reports and Verify Integrity**
+
+1. **Activate the virtual environment** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Create a timestamped archive folder**  
+   ```bash
+   REPORT_ROOT=~/pi_project/analysis_reports
+   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+   ARCHIVE_DIR="${REPORT_ROOT}/archive_${TIMESTAMP}"
+   mkdir -p "$ARCHIVE_DIR"
+   ```
+
+3. **Move all current reports into the archive**  
+   ```bash
+   mv "${REPORT_ROOT}"/*.txt "${REPORT_ROOT}"/*.json "${ARCHIVE_DIR}/" 2>/dev/null || true
+   ```
+
+4. **Compress the archive for easy storage / sharing**  
+   ```bash
+   tar -czf "${ARCHIVE_DIR}.tar.gz" -C "${REPORT_ROOT}" "archive_${TIMESTAMP}"
+   ```
+
+5. **Generate a SHA‑256 checksum file**  
+   ```bash
+   sha256sum "${ARCHIVE_DIR}.tar.gz" > "${ARCHIVE_DIR}.sha256"
+   ```
+
+6. **Confirm the archive is readable**  
+   ```bash
+   tar -tzf "${ARCHIVE_DIR}.tar.gz"
+   ```
+
+These actions preserve every static‑analysis and call‑graph output, make them portable, and give you a verifiable checksum for future reference.
+
+****

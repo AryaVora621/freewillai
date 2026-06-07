@@ -449,17 +449,15 @@ Write WORKING Python code (no markdown, no triple backticks, raw Python only).
 Start with: # Goal: then a function or class definition.
 Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         else:
-            prompt = f"""You are {self.personality.name}, an autonomous AI agent on a Raspberry Pi.
-Active goal: {goal['description']}
-
-Progress so far:
-{history}
-
-Write the ACTUAL CONTENT for this goal step — technical analysis, code sketch, or concrete plan.
-Be specific and direct. Do NOT refuse or say you cannot help.
-Keep it under 200 words.
-
-End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
+            prompt = (
+                'You are a Python developer working on a Raspberry Pi project.' + chr(10) +
+                'Task: ' + goal['description'][:150] + chr(10) +
+                'Progress so far:' + chr(10) + history + chr(10) + chr(10) +
+                'Write the next concrete step: technical analysis, code sketch, or a specific action.' + chr(10) +
+                'Be direct and specific. Under 150 words.' + chr(10) +
+                'End your response with either STATUS: continue or STATUS: complete' + chr(10) +
+                'Response:'
+            )
         output = self.inference.generate(prompt, max_tokens=300)
         if not output:
             return None

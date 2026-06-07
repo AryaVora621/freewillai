@@ -65,7 +65,7 @@ class Planner:
             '{"tool":"kv_set","args":{"key":"result","value":"done"},"expected":"stored"}]' + chr(10) +
             "JSON only, no explanation:"
         )
-        response = self.inference.generate_fast(prompt, max_tokens=200)
+        response = self.inference.generate(prompt, max_tokens=200)
         if not response:
             return None
 

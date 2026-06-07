@@ -175,3 +175,39 @@ Once the reports are ready, we can move to targeted refactoring.
    - Review `callgraph.png` to spot tightly‑coupled modules or deep call stacks.
 
 These artifacts will guide the refactoring plan.
+
+## Iteration 75 — 2026-06-07T10:24:49.329946
+
+**Next Concrete Step – Generate a Call‑Graph and Collect Metrics**
+
+1. **Install the visualisation tools (if not already installed)**  
+   ```bash
+   pip install pycallgraph2 graphviz
+   ```
+
+2. **Run the call‑graph on the main entry point**  
+   ```bash
+   pycallgraph graphviz --output-file=callgraph.png -- \
+       python -m my_pi_project.main
+   ```
+
+   *Replace `my_pi_project.main` with the actual module that starts the application.*
+
+3. **Collect basic code metrics**  
+   ```bash
+   pip install radon
+   radon cc -s -a .   # Cyclomatic complexity
+   radon mi -s .      # Maintainability index
+   ```
+
+4. **Save the reports**  
+   ```bash
+   mkdir -p analysis_reports
+   mv callgraph.png analysis_reports/
+   radon cc -s -a . > analysis_reports/complexity.txt
+   radon mi -s . > analysis_reports/maintainability.txt
+   ```
+
+These artifacts will give us a visual overview of module interactions and quantitative metrics to prioritize refactoring.
+
+****

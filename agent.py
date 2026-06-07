@@ -548,6 +548,70 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
             trigger.touch()
             return "Trigger set -- next iteration will fire within 5 seconds."
 
+        # /shell <cmd> -- run arbitrary shell command on the Pi
+        if text.strip().startswith("/shell ") or text.strip().startswith("$ "):
+            raw_cmd = text.strip()
+            if raw_cmd.startswith("/shell "):
+                shell_cmd = raw_cmd[7:].strip()
+            else:
+                shell_cmd = raw_cmd[2:].strip()
+            if not shell_cmd:
+                return "Usage: /shell <command>"
+            import subprocess as _sp
+            try:
+                result = _sp.run(
+                    shell_cmd, shell=True, capture_output=True, text=True,
+                    timeout=30, cwd=self.repo_path,
+                    env=dict(__import__('os').environ, HOME='/home/pi', PATH='/usr/local/bin:/usr/bin:/bin')
+                )
+                out = (result.stdout or '').strip()
+                err = (result.stderr or '').strip()
+                combined = ((out + chr(10) + err) if err else out).strip()
+                exit_info = '' if result.returncode == 0 else f' [exit {result.returncode}]'
+                return (combined[:1800] + exit_info) if combined else f'(no output){exit_info}'
+            except _sp.TimeoutExpired:
+                return 'Timeout after 30s'
+            except Exception as e:
+                return f'Error: {e}'
+
+        # /py <code> -- run Python code on the Pi
+        if text.strip().startswith("/py "):
+            py_code = text.strip()[4:].strip()
+            if not py_code:
+                return "Usage: /py <python code>"
+            import subprocess as _sp
+            try:
+                result = _sp.run(
+                    ['python3', '-c', py_code],
+                    capture_output=True, text=True, timeout=15,
+                    cwd=self.repo_path,
+                    env=dict(__import__('os').environ, HOME='/home/pi')
+                )
+                out = (result.stdout or '').strip()
+                err = (result.stderr or '').strip()
+                combined = ((out + chr(10) + err) if err else out).strip()
+                return combined[:1800] if combined else '(no output)'
+            except _sp.TimeoutExpired:
+                return 'Timeout after 15s'
+            except Exception as e:
+                return f'Error: {e}'
+
+        # /git <args> -- run git command in repo
+        if text.strip().startswith("/git "):
+            git_args = text.strip()[5:].strip().split()
+            if not git_args:
+                return "Usage: /git <args>"
+            import subprocess as _sp
+            try:
+                result = _sp.run(
+                    ['git'] + git_args, capture_output=True, text=True, timeout=30,
+                    cwd=self.repo_path
+                )
+                out = (result.stdout + result.stderr).strip()
+                return out[:1800] if out else f'exit {result.returncode}'
+            except Exception as e:
+                return f'Error: {e}'
+
         if cmd in ("/help",):
             return (
                 "/status -- iteration count and active goal" + chr(10) +
@@ -557,7 +621,10 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
                 "/log -- recent daemon log" + chr(10) +
                 "/think -- generate a thought" + chr(10) +
                 "/run -- trigger an immediate iteration" + chr(10) +
-                "Or just chat with me directly."
+                "/shell <cmd> -- run shell command on Pi" + chr(10) +
+                "/py <code> -- run Python code on Pi" + chr(10) +
+                "/git <args> -- git command in repo" + chr(10) +
+                "Or just chat directly."
             )
 
         # Personality-driven reply for non-commands

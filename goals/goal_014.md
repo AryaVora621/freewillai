@@ -290,3 +290,47 @@ chmod +x archive_metrics.sh
    - Extract it (`tar -tzf archives/metrics_*.tar.gz`) to confirm the three metric files are inside.
 
 **Status:** continue
+
+## Iteration 97 — 2026-06-07T18:40:27.865213
+
+**Next Concrete Step – Archive the collected metrics**
+
+1. **Create an archive script** `archive_metrics.sh` in the project root:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+METRICS_DIR="metrics"
+ARCHIVE_DIR="archives"
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+mkdir -p "$ARCHIVE_DIR"
+
+# Create a tar.gz containing all metric files generated in the last run
+tar -czf "$ARCHIVE_DIR/metrics_${TIMESTAMP}.tar.gz" -C "$METRICS_DIR" .
+
+# Optional: keep only the latest 7 archives
+ls -1t "$ARCHIVE_DIR"/metrics_*.tar.gz | tail -n +8 | xargs -r rm --
+```
+
+2. **Make it executable**:
+
+```bash
+chmod +x archive_metrics.sh
+```
+
+3. **Run the full workflow** (collect then archive) with a single command:
+
+```bash
+./collect_metrics.sh && ./archive_metrics.sh
+```
+
+4. **Verify**:
+   * `metrics/` still contains the raw `.txt` files.
+   * `archives/` now holds `metrics_<TS>.tar.gz`.
+   * Only the 7 most recent archives remain.
+
+Once confirmed, you can add the scripts to version control.
+
+****

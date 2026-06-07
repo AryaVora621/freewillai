@@ -4,7 +4,21 @@
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRIGGER="$REPO_DIR/.run_now"
+PIDFILE="$REPO_DIR/.daemon.pid"
 cd "$REPO_DIR"
+
+# Kill any existing daemon (shell + all its python3 agent.py children)
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE")
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "Stopping existing daemon (PID $OLD_PID)..."
+        kill "$OLD_PID" 2>/dev/null
+        sleep 1
+    fi
+fi
+# Also kill stray agent.py processes
+pkill -f "python3 agent.py" 2>/dev/null
+sleep 1
 
 if [ -d "venv" ]; then
     source venv/bin/activate
@@ -18,7 +32,7 @@ echo ""
 {
     while true; do
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running iteration..."
-        python3 agent.py 2>&1 | sed 's/^/  /'
+        PYTHONUNBUFFERED=1 python3 agent.py 2>&1 | sed 's/^/  /'
 
         INTERVAL=$(grep AGENT_ITERATION_INTERVAL .env 2>/dev/null | cut -d= -f2 | tr -d ' ' || echo 600)
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Sleeping ${INTERVAL}s (touch .run_now to skip)..."
@@ -38,5 +52,5 @@ echo ""
 } >> daemon.log 2>&1 &
 
 PID=$!
-echo "$PID" > .daemon.pid
+echo "$PID" > "$PIDFILE"
 echo "Daemon started with PID $PID"

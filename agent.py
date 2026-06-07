@@ -449,7 +449,9 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             return None
 
         goal_desc = goal_text.strip().splitlines()[0][:200]
-        preamble_words = ("here is", "here are", "i will", "sure,", "of course", "python script")
+        preamble_words = ("here is", "here are", "here's", "i will", "sure,", "of course",
+                          "python script", "1.", "**", "- ", "certainly", "below is",
+                          "a specific", "this goal")
         if any(goal_desc.lower().startswith(p) for p in preamble_words):
             for _gl in goal_text.strip().splitlines():
                 _gl = _gl.strip()
@@ -457,9 +459,13 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                     goal_desc = _gl[:200]
                     break
 
-        # Reject goals that look like code — fall back to the category template
+        # Reject goals that look like code or are still preamble — fall back to category template
         code_markers = ('def ', 'import ', 'response = ', '```', 'requests.get', '#!/')
-        if any(m in goal_desc for m in code_markers) or goal_desc.count(':') > 3:
+        if (any(m in goal_desc for m in code_markers)
+                or goal_desc.count(':') > 3
+                or len(goal_desc) < 15
+                or goal_desc.lower().startswith("here")
+                or goal_desc.startswith("**")):
             goal_desc = cat
 
         goal = {

@@ -530,3 +530,47 @@ Now you have a timestamped, checksummed archive of all analysis reports ready fo
 These commands bundle the latest static‑analysis results, create a verifiable checksum manifest, and record the action for future auditing.  
 
 ****
+
+## Iteration 84 — 2026-06-07T12:19:28.707984
+
+**Next Concrete Step – Execute Full Static‑Analysis Suite and Store All Results**
+
+1. **Activate the virtual environment** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Create a timestamped report directory**  
+   ```bash
+   REPORT_DIR=~/pi_project/analysis_reports/$(date +%Y%m%d_%H%M%S)
+   mkdir -p "$REPORT_DIR"
+   ```
+
+3. **Run each analysis tool and redirect output to files**  
+
+   ```bash
+   # flake8 – style & lint
+   flake8 ~/pi_project > "$REPORT_DIR/flake8.txt" 2>&1
+
+   # pylint – comprehensive lint
+   pylint ~/pi_project > "$REPORT_DIR/pylint.txt" 2>&1
+
+   # bandit – security scanner
+   bandit -r ~/pi_project -lll > "$REPORT_DIR/bandit.txt" 2>&1
+
+   # radon – code complexity
+   radon cc -s -a ~/pi_project > "$REPORT_DIR/radon_complexity.txt" 2>&1
+   radon mi -s ~/pi_project > "$REPORT_DIR/radon_maintainability.txt" 2>&1
+   ```
+
+4. **Verify that all reports were created**  
+   ```bash
+   ls -l "$REPORT_DIR"
+   ```
+
+5. **(Optional) Print a short summary**  
+   ```bash
+   echo "Static‑analysis completed. Reports stored in $REPORT_DIR"
+   ```
+
+Now you have a complete, timestamped set of analysis reports ready for archiving.

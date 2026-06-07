@@ -215,3 +215,30 @@ tar -czf metrics_${TS}.tar.gz metrics/
 Now you have a reproducible snapshot of CPU, memory, and disk I/O to review before optimizing the Python code.
 
 ****
+
+## Iteration 96 — 2026-06-07T18:32:06.876883
+
+**Next Concrete Step – Run the script, verify output, and archive the metrics**
+
+1. From your project root, make the script executable and run it:
+
+```bash
+chmod +x collect_metrics.sh
+./collect_metrics.sh
+```
+
+2. Confirm three files appear in the `metrics/` folder:
+
+- `top_YYYYMMDD_HHMMSS.txt` – full `top` snapshot (CPU % & memory)
+- `iostat_YYYYMMDD_HHMMSS.txt` – three 5‑second I/O samples
+- `free_YYYYMMDD_HHMMSS.txt` – memory usage (`free -h` added in the script)
+
+3. Archive the run for later analysis:
+
+```bash
+tar -czf metrics_$(date +%Y%m%d_%H%M%S).tar.gz metrics/
+```
+
+4. Open the files and note any high‑CPU processes, memory pressure, or I/O wait spikes. Those entries will guide the code‑optimisation review in the next iteration.
+
+****

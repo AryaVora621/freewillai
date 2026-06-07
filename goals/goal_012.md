@@ -574,3 +574,47 @@ These commands bundle the latest static‑analysis results, create a verifiable 
    ```
 
 Now you have a complete, timestamped set of analysis reports ready for archiving.
+
+## Iteration 85 — 2026-06-07T12:31:40.681983
+
+**Next Concrete Step – Archive All Generated Reports and Verify Their Integrity**
+
+1. **Activate the virtual environment** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Create a timestamped archive folder**  
+   ```bash
+   REPORT_ROOT=~/pi_project/analysis_reports
+   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+   ARCHIVE_DIR="${REPORT_ROOT}/archive_${TIMESTAMP}"
+   mkdir -p "$ARCHIVE_DIR"
+   ```
+
+3. **Move the latest report directory into the archive**  
+   ```bash
+   # Find the most recent report directory (assumes only one per timestamp)
+   LATEST_REPORT=$(ls -dt "$REPORT_ROOT"/*/ | head -n1)
+   mv "$LATEST_REPORT" "$ARCHIVE_DIR/"
+   ```
+
+4. **Create a SHA‑256 checksum file for verification**  
+   ```bash
+   cd "$ARCHIVE_DIR"
+   find . -type f -exec sha256sum {} + > checksums.sha256
+   ```
+
+5. **Verify the checksums (optional sanity check)**  
+   ```bash
+   sha256sum -c checksums.sha256
+   ```
+
+6. **Log the archiving action**  
+   ```bash
+   echo "$(date '+%Y-%m-%d %H:%M:%S') – Archived $LATEST_REPORT to $ARCHIVE_DIR" >> ~/pi_project/archive.log
+   ```
+
+Run these commands in a terminal or place them in a script (`archive_reports.sh`) and execute it after each static‑analysis run.
+
+****

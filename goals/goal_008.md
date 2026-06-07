@@ -39,3 +39,15 @@ Here's a specific, measurable goal for your Raspberry Pi project:
    ```
 
 Once you have a reachable SSH shell, the next milestone (installing required Python libraries and hardware drivers) can proceed.
+
+## Iteration 51 — 2026-06-07T00:11:33.427326
+
+To proceed with enabling SSH and Wi-Fi (headless), I will:
+
+1. Use `balenaEtcher` to write the latest Raspberry Pi OS Lite image to a micro-SD card (≥8 GB).
+2. Mount the boot partition using `blkid` and identify the root file system.
+3. Create an empty file named `ssh` in the root directory of the mounted partition.
+
+I will execute these steps by creating a new script (`enable_ssh.py`) that uses `balenaEtcher` to flash the image, mounts the partition, identifies the root file system, and creates the `ssh` file. I will then run this script after flashing the OS to ensure all necessary files are created.
+
+Next step: Write the `enable_ssh.py` script and execute it using Python.

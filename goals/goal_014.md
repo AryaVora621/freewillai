@@ -138,3 +138,38 @@ echo "Metrics collected at $TS"
 ```
 
 Run it with `./collect_metrics.sh` and inspect the files to start your performance analysis.
+
+## Iteration 94 — 2026-06-07T18:21:41.816007
+
+**Next Concrete Step – Execute the metric‑collection script and archive the results**
+
+1. Save the script below as `collect_metrics.sh` in your project root and make it executable:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p metrics
+TS=$(date +%Y%m%d_%H%M%S)
+
+# CPU & memory snapshot
+top -b -n1 > "metrics/top_${TS}.txt"
+
+# Disk I/O stats (5‑second interval, 3 samples)
+iostat -d 5 3 > "metrics/iostat_${TS}.txt"
+
+# Memory summary
+free -h > "metrics/free_${TS}.txt"
+```
+
+2. Run the script:
+
+```bash
+chmod +x collect_metrics.sh
+./collect_metrics.sh
+```
+
+3. Verify that three files (`top_*.txt`, `iostat_*.txt`, `free_*.txt`) appear in the `metrics/` folder. Commit these files (or a compressed archive) to your repo for later analysis.
+
+After confirming the files exist, you can begin parsing them with Python to pinpoint high‑CPU or I/O hotspots.
+
+****

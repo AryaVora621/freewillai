@@ -443,3 +443,46 @@ Run the script above; it will produce a complete, timestamped set of static‑an
 These actions preserve every static‑analysis and call‑graph output, make them portable, and give you a verifiable checksum for future reference.
 
 ****
+
+## Iteration 82 — 2026-06-07T11:53:50.118456
+
+**Next Concrete Step – Archive All Generated Reports and Verify Integrity**
+
+1. **Activate the virtual environment** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Create a timestamped archive folder**  
+   ```bash
+   REPORT_ROOT=~/pi_project/analysis_reports
+   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+   ARCHIVE_DIR="${REPORT_ROOT}/archive_${TIMESTAMP}"
+   mkdir -p "$ARCHIVE_DIR"
+   ```
+
+3. **Move all current report files into the archive**  
+   ```bash
+   # Assuming reports are in the top‑level of analysis_reports and not already archived
+   find "$REPORT_ROOT" -maxdepth 1 -type f -name "*.txt" -o -name "*.json" -o -name "*.png" | while read f; do
+       mv "$f" "$ARCHIVE_DIR/"
+   done
+   ```
+
+4. **Create a SHA‑256 checksum manifest for the archived files**  
+   ```bash
+   cd "$ARCHIVE_DIR"
+   sha256sum * > SHA256SUMS.txt
+   ```
+
+5. **Verify the integrity of the archived files** (optional sanity check)  
+   ```bash
+   sha256sum -c SHA256SUMS.txt
+   ```
+
+6. **Log the archiving operation**  
+   ```bash
+   echo "$(date '+%Y-%m-%d %H:%M:%S') – Archived reports to $ARCHIVE_DIR" >> ~/pi_project/archive.log
+   ```
+
+Now you have a timestamped, checksummed archive of all analysis reports ready for future review.

@@ -312,3 +312,48 @@ Proceed to review the graph for hot paths, circular imports, or unexpected depen
 These artifacts will be the basis for the technical analysis and subsequent refactor planning.  
 
 ****
+
+## Iteration 79 — 2026-06-07T11:15:57.020315
+
+**Next Concrete Step – Run Full Static‑Analysis Suite and Archive the Results**
+
+1. **Activate the virtual environment** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Upgrade and install the analysis tools**  
+   ```bash
+   pip install --upgrade flake8 pylint bandit radon
+   ```
+
+3. **Create a directory for reports**  
+   ```bash
+   mkdir -p analysis_reports
+   ```
+
+4. **Run the tools and store their outputs**  
+   ```bash
+   # PEP‑8 / style
+   flake8 . > analysis_reports/flake8_report.txt
+
+   # pylint (code quality)
+   pylint $(git ls-files '*.py') > analysis_reports/pylint_report.txt
+
+   # Bandit (security)
+   bandit -r . -ll > analysis_reports/bandit_report.txt
+
+   # Radon (complexity)
+   radon cc -s -a . > analysis_reports/radon_complexity.txt
+   radon mi -s . > analysis_reports/radon_maintainability.txt
+   ```
+
+5. **Commit the reports (optional)**  
+   ```bash
+   git add analysis_reports
+   git commit -m "Add static analysis reports"
+   ```
+
+Now you have a complete, version‑controlled snapshot of code‑quality metrics ready for review.
+
+****

@@ -276,15 +276,26 @@ Start directly with `def ` or `class `. Under 25 lines. Short docstring on first
         if not code or len(code.strip()) < 20:
             return None
 
-        # Strip any accidental markdown wrapping
+        # Strip markdown fences and leading prose
         code = code.strip()
         if code.startswith("```"):
             lines = code.splitlines()
             if lines[0].startswith("```"):
                 lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
+            if lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
-            code = "\n".join(lines).strip()
+            code = chr(10).join(lines).strip()
+        # Strip leading prose lines (text before first def/class/import)
+        code_starts = ('def ', 'class ', 'import ', 'from ', 'async def ', '#!')
+        code_lines = code.splitlines()
+        first_code = 0
+        for i, line in enumerate(code_lines):
+            if any(line.lstrip().startswith(p) for p in code_starts):
+                first_code = i
+                break
+        if first_code > 0:
+            code = chr(10).join(code_lines[first_code:])
+        code = code.strip()
 
         improvements_dir = Path(self.repo_path) / "improvements"
         improvements_dir.mkdir(exist_ok=True)

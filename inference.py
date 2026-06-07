@@ -106,7 +106,7 @@ class OpenRouterClient:
         "qwen/qwen3-30b-a3b:free",
     ]
     FREE_CODE_MODELS = [
-        "qwen/qwen3-coder-turbo:free",
+        "qwen/qwen3-coder:free",
         "nvidia/nemotron-3-super-120b-a12b:free",
         "openai/gpt-oss-120b:free",
         "meta-llama/llama-3.3-70b-instruct:free",
@@ -117,7 +117,7 @@ class OpenRouterClient:
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
         self.eval_model = os.getenv("OPENROUTER_EVAL_MODEL", self.model)
-        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder-turbo:free")
+        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder:free")
         self.base_url = "https://openrouter.ai/api/v1"
         self._rate_limited_models = set()
 

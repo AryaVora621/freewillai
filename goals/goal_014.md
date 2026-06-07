@@ -242,3 +242,51 @@ tar -czf metrics_$(date +%Y%m%d_%H%M%S).tar.gz metrics/
 4. Open the files and note any high‑CPU processes, memory pressure, or I/O wait spikes. Those entries will guide the code‑optimisation review in the next iteration.
 
 ****
+
+## Iteration 97 — 2026-06-07T18:36:28.247020
+
+**Next Concrete Step – Archive the Collected Metrics and Verify Integrity**
+
+1. **Create an archive script** `archive_metrics.sh` in the project root:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure a metrics directory exists
+METRICS_DIR="metrics"
+ARCHIVE_DIR="archives"
+mkdir -p "$ARCHIVE_DIR"
+
+# Build a timestamp for the archive name
+TS=$(date +%Y%m%d_%H%M%S)
+
+# Create a tar.gz archive of all files in the metrics folder
+tar -czf "$ARCHIVE_DIR/metrics_${TS}.tar.gz" -C "$METRICS_DIR" .
+
+# Optional: Verify the archive size is > 0
+if [[ -s "$ARCHIVE_DIR/metrics_${TS}.tar.gz" ]]; then
+    echo "Archive created: $ARCHIVE_DIR/metrics_${TS}.tar.gz"
+else
+    echo "ERROR: Archive is empty!" >&2
+    exit 1
+fi
+```
+
+2. **Make it executable**:
+
+```bash
+chmod +x archive_metrics.sh
+```
+
+3. **Run the archive script** immediately after `collect_metrics.sh`:
+
+```bash
+./collect_metrics.sh && ./archive_metrics.sh
+```
+
+4. **Validate**:
+   - The `archives/` folder now contains `metrics_YYYYMMDD_HHMMSS.tar.gz`.
+   - Extract it (`tar -tzf archives/metrics_*.tar.gz`) to confirm the three metric files are inside.
+
+**Status:** continue

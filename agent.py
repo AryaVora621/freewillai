@@ -133,16 +133,45 @@ class AutonomousAgent:
             json.dump(self.state, f, indent=2)
 
     def think(self, goal: str) -> str:
+        """Generate a concrete, actionable single-step suggestion toward the goal."""
         import os as _os
-        import json as _json
-    
         try:
             py_files = [f for f in _os.listdir(self.repo_path) if f.endswith('.py')][:5]
-            files_list = chr(10).join(py_files)
         except Exception:
-            files_list = 'agent.py inference.py tools.py'
-    
-        return f'suggest_modification_for_goal_{goal}: {files_list}'
+            py_files = ['agent.py', 'inference.py', 'tools.py']
+
+        recent_decisions = [
+            d.get('decision', '')[:60]
+            for d in self.state.get('decisions', [])[-3:]
+        ]
+        context_summary = (
+            f"Goal: {goal[:100]}\n"
+            f"Iteration: {self.state.get('iterations', 0)}\n"
+            f"Recent decisions: {'; '.join(recent_decisions) or 'none'}\n"
+            f"Repo files: {', '.join(py_files)}"
+        )
+        prompt = (
+            "You are an autonomous agent on a Raspberry Pi. Given this context:\n" +
+            context_summary + "\n\n" +
+            "Output ONE concrete next action as JSON:\n" +
+            '{"file": "agent.py", "change": "specific code change in 1-2 sentences", '
+            '"reason": "why this advances the goal"}\n'
+            "JSON only, no explanation:"
+        )
+        response = self.inference.generate(prompt, max_tokens=120)
+        if response:
+            import json as _json
+            try:
+                text = response.strip()
+                start = text.find('{')
+                end = text.rfind('}')
+                if start != -1 and end != -1:
+                    data = _json.loads(text[start:end+1])
+                    return f"FILE: {data.get('file','agent.py')} | {data.get('change','improve code')} | {data.get('reason','')}"
+            except Exception:
+                pass
+            return f"FILE: agent.py | {response[:120]}"
+        return f"FILE: agent.py | Improve error handling in main loop"
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
         # Strip FILE: prefix for cleaner evaluation
@@ -873,6 +902,21 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
             _ast.parse(new_code)
         except SyntaxError as e:
             logger.warning(f"self_modify: generated code has syntax error: {e}")
+            return None
+
+        # Quality gate: reject trivial/broken proposals
+        bad_signals = [
+            "suggest_modification_for_goal_",  # literal template leak
+            "return f'suggest_",               # template return
+            "files_list",                      # useless file-list return
+            "chr(10).join(py_files)",          # known bad pattern
+        ]
+        if any(sig in new_code for sig in bad_signals):
+            logger.warning("self_modify: proposal failed quality gate (trivial/template output)")
+            return None
+        # Must have real logic: at least one inference/self call or meaningful return
+        if new_code.count('\n') < 5:
+            logger.warning("self_modify: proposal too short to be meaningful")
             return None
 
         # Write to a staging file for inspection (not applied directly)

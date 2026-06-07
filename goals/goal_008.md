@@ -65,3 +65,54 @@ To proceed with enabling SSH and Wi-Fi (headless), you need to perform the follo
 4. **Mount the Boot Partition and Create SSH Directory**: Use `sudo mount -o remount /dev/sdb1 /media/sda1` to mount the boot partition, and then use `sudo mkdir -p /media/sda1/ssh` to create an empty directory named `ssh` in the root of the mounted partition.
 
 This script will ensure that SSH and Wi-Fi settings are enabled on the headless Raspberry Pi.
+
+## Iteration 53 — 2026-06-07T00:39:31.560284
+
+**Next Concrete Step – Create a Python script that prepares the SD‑card for head‑less boot**
+
+1. **Detect the boot partition**  
+   ```python
+   import subprocess, pathlib, sys
+
+   def get_boot_mount():
+       # List block devices, look for the FAT partition (type vfat) on the inserted card
+       out = subprocess.check_output(['lsblk', '-o', 'NAME,FSTYPE,MOUNTPOINT', '-J']).decode()
+       import json, re
+       for dev in json.loads(out)['blockdevices']:
+           if dev.get('fstype') == 'vfat' and dev.get('mountpoint'):
+               return pathlib.Path(dev['mountpoint'])
+       sys.exit('Boot partition not found – insert the flashed SD card')
+   ```
+
+2. **Create the `ssh` flag file**  
+   ```python
+   def enable_ssh(boot_path: pathlib.Path):
+       (boot_path / 'ssh').touch()
+   ```
+
+3. **Add Wi‑Fi configuration (optional)**  
+   ```python
+   def add_wifi(boot_path: pathlib.Path, ssid: str, psk: str, country: str = 'US'):
+       wpa = f"""country={country}
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+network={{
+    ssid="{ssid}"
+    psk="{psk}"
+    key_mgmt=WPA-PSK
+}}"""
+       (boot_path / 'wpa_supplicant.conf').write_text(wpa)
+   ```
+
+4. **Main routine**  
+   ```python
+   if __name__ == '__main__':
+       boot = get_boot_mount()
+       enable_ssh(boot)
+       # Uncomment and fill in your Wi‑Fi details if needed:
+       # add_wifi(boot, 'YourSSID', 'YourPassword')
+       print('SSH enabled (and Wi‑Fi config written if used).')
+   ```
+
+Save this as **`enable_ssh.py`**, run it while the SD card is mounted, then safely eject the card. The Pi will boot with SSH enabled and, if supplied, connect to your Wi‑Fi network automatically.
+
+****

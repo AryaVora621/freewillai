@@ -679,6 +679,17 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
                 "Or just chat directly."
             )
 
+        # /test or "test tools" / "test shell" — run real tool verification
+        if cmd in ("/test", "test", "test tools", "test shell", "test your tools"):
+            results = []
+            r1 = execute_tool("shell", {"cmd": "echo shell_ok && python3 --version"}, repo_path=self.repo_path)
+            results.append("shell: " + r1[:80])
+            r2 = execute_tool("read_file", {"path": "README.md"}, repo_path=self.repo_path)
+            results.append("read_file: " + r2[:60])
+            r3 = execute_tool("kv_set", {"key": "test_ping", "value": "ok"}, repo_path=self.repo_path)
+            results.append("kv_set: " + r3[:40])
+            return "Tool test results:\n" + "\n".join(results)
+
         # Personality-driven reply for non-commands — grounded in real capabilities
         prompt = (
             "You are freeWill, an autonomous AI agent running on a Raspberry Pi." + chr(10) +

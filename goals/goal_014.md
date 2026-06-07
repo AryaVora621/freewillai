@@ -74,3 +74,34 @@ To conduct technical analysis of my current project's performance, I will:
 2. Use `iostat -d5 --noerror --nocomm --nohead | grep mem` to check disk usage on the /root partition.
 
 I will use this output to review my code for potential optimization opportunities, focusing on areas that can impact performance such as memory allocation, process scheduling, and I/O operations. Specifically, I want to identify any inefficient data structures, unnecessary function calls, or other bottlenecks in the current implementation.
+
+## Iteration 92 — 2026-06-07T18:08:28.523628
+
+**Next Concrete Step – Capture and Save System Metrics**
+
+1. **Create a short Bash script** (`collect_metrics.sh`) that runs the required commands and writes their output to timestamped files in a `metrics/` folder.
+
+```bash
+#!/bin/bash
+mkdir -p metrics
+TS=$(date +%Y%m%d_%H%M%S)
+
+# CPU & memory snapshot
+top -b -n1 > metrics/top_$TS.txt
+
+# Disk I/O stats (5‑second interval, 3 samples)
+iostat -d 5 3 > metrics/iostat_$TS.txt
+
+# Optional: free memory summary
+free -h > metrics/free_$TS.txt
+```
+
+2. **Make it executable**: `chmod +x collect_metrics.sh`.
+
+3. **Run it now**: `./collect_metrics.sh`. Verify that three files appear in `metrics/` with the current timestamp.
+
+4. **Collect a second set after 5 minutes** to compare trends.
+
+These logs will be the raw data for your performance analysis and will guide the code‑review focus.
+
+**Next action after logs:** Open `metrics/top_*.txt` and `metrics/iostat_*.txt`, note the highest CPU% processes and any device with >80 % utilization, then annotate the corresponding sections in your Python code for optimization.

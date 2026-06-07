@@ -105,3 +105,36 @@ free -h > metrics/free_$TS.txt
 These logs will be the raw data for your performance analysis and will guide the code‑review focus.
 
 **Next action after logs:** Open `metrics/top_*.txt` and `metrics/iostat_*.txt`, note the highest CPU% processes and any device with >80 % utilization, then annotate the corresponding sections in your Python code for optimization.
+
+## Iteration 93 — 2026-06-07T18:14:41.695395
+
+**Next Concrete Step – Capture and Save System Metrics**
+
+1. **Create the Bash script** `collect_metrics.sh` (as shown below) and make it executable.  
+2. **Run the script** and verify that three timestamped files appear in the `metrics/` directory:  
+   * `top_<TS>.txt` – full `top` snapshot (CPU % and memory).  
+   * `iostat_<TS>.txt` – disk I/O stats (3 samples, 5‑second interval).  
+   * `free_<TS>.txt` – memory summary (`free -h`).  
+3. **Commit the script** to your repo and add a short README entry describing how to use it.  
+
+```bash
+#!/bin/bash
+set -euo pipefail
+
+# Prepare output folder
+mkdir -p metrics
+TS=$(date +%Y%m%d_%H%M%S)
+
+# CPU & memory snapshot
+top -b -n1 > "metrics/top_${TS}.txt"
+
+# Disk I/O stats (5‑second interval, 3 samples)
+iostat -d 5 3 > "metrics/iostat_${TS}.txt"
+
+# Memory usage summary
+free -h > "metrics/free_${TS}.txt"
+
+echo "Metrics collected at $TS"
+```
+
+Run it with `./collect_metrics.sh` and inspect the files to start your performance analysis.

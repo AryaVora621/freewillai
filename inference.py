@@ -20,9 +20,10 @@ class OllamaClient:
     """Interface to local Ollama for inference"""
     def __init__(self, base_url: str = "http://localhost:11434"):
         self.base_url = base_url
-        self.model = os.getenv("OLLAMA_MODEL", "mistral")
-        self.eval_model = os.getenv("OLLAMA_EVAL_MODEL", self.model)
-        self.fallback_models = ["mistral", "neural-chat", "llama2-uncensored", "phi"]
+        self.model = os.getenv("OLLAMA_MODEL", "llama3.2:1b")
+        # smollm2:135m is fast (~0.1s) for eval; qwen2.5:0.5b is fallback
+        self.eval_model = os.getenv("OLLAMA_EVAL_MODEL", "smollm2:135m")
+        self.fallback_models = ["llama3.2:1b", "qwen2.5:0.5b", "smollm2:135m"]
         self.available_models = []
         self.check_available_models()
 
@@ -45,6 +46,16 @@ class OllamaClient:
                         old_model = self.model
                         self.model = self.available_models[0]
                         logger.warning(f"Model {old_model} not available, switching to {self.model}")
+                # Auto-select fastest available eval model
+                FAST_EVAL_MODELS = ["smollm2:135m", "qwen2.5:0.5b"]
+                if self.eval_model not in self.available_models:
+                    for fast in FAST_EVAL_MODELS:
+                        if fast in self.available_models:
+                            self.eval_model = fast
+                            logger.info(f"Using {fast} as eval model")
+                            break
+                    else:
+                        self.eval_model = self.model  # fallback to main model
         except Exception as e:
             logger.warning(f"Could not check available models: {e}")
 

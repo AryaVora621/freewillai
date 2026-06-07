@@ -99,9 +99,11 @@ class DiscordBot:
 class TelegramBot:
     """Telegram bot interface - sends/receives messages via the Bot API"""
     def __init__(self, token: Optional[str] = None):
+        import threading
         self.token = token or os.getenv("TELEGRAM_BOT_TOKEN")
         self.chat_id = os.getenv("TELEGRAM_CHAT_ID")
         self.api_base = f"https://api.telegram.org/bot{self.token}" if self.token else None
+        self._poll_lock = threading.Lock()  # prevent concurrent getUpdates (409 conflict)
         self.callback = None
         self.offset_file = Path(__file__).parent / ".freeWill_telegram_offset.json"
         self.update_offset = self._load_offset()
@@ -163,6 +165,8 @@ class TelegramBot:
         """Fetch new incoming messages since the last processed offset"""
         if not self.token or not self.api_base:
             return []
+        if not self._poll_lock.acquire(blocking=False):
+            return []  # Another thread is already polling — skip this call
         try:
             params = {"timeout": 0}
             if self.update_offset is not None:
@@ -179,6 +183,8 @@ class TelegramBot:
         except Exception as e:
             logger.error(f"Telegram getUpdates exception: {e}")
             return []
+        finally:
+            self._poll_lock.release()
 
     def handle_updates(self):
         """Poll for new messages and dispatch them to the registered callback"""

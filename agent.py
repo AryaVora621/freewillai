@@ -71,6 +71,17 @@ class GitController:
         return result.returncode == 0 if hasattr(result, 'returncode') else True
 
     def push(self, branch: str = "main") -> bool:
+        """Push to origin. Uses GITHUB_TOKEN env var if set to authenticate."""
+        token = os.getenv("GITHUB_TOKEN")
+        if token:
+            # Inject token into remote URL for this push
+            remote_url = self.run_git("remote", "get-url", "origin").strip()
+            if remote_url.startswith("https://github.com/"):
+                authed = remote_url.replace("https://github.com/", f"https://{token}@github.com/")
+                self.run_git("remote", "set-url", "origin", authed)
+                result = self.run_git("push", "origin", branch)
+                self.run_git("remote", "set-url", "origin", remote_url)  # restore clean URL
+                return "error" not in result.lower()
         result = self.run_git("push", "origin", branch)
         return "error" not in result.lower()
 
@@ -251,20 +262,38 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         return response
 
     def identify_code_improvements(self) -> list:
-        """Self-review of agent code for improvements"""
+        """Self-review of rotating code sections, returns short actionable suggestions."""
+        import os as _os, random as _rnd
+        repo_files = ['agent.py', 'inference.py', 'tools.py', 'planner.py']
+        target = repo_files[self.state.get('iterations', 0) % len(repo_files)]
         try:
-            with open(__file__, 'r') as f:
-                src_lines = f.readlines()
-            code_snippet = ''.join(src_lines[50:120])
+            src = open(_os.path.join(self.repo_path, target)).read()
+            lines = src.splitlines()
+            start = _rnd.randint(0, max(0, len(lines) - 35))
+            snippet = chr(10).join(lines[start:start+30])
         except Exception:
-            code_snippet = '(could not read source)'
+            snippet = '(unreadable)'
+            start = 0
         prompt = (
-            'Review this Python code and list 3 specific improvements.' + chr(10) +
-            'Code:' + chr(10) + code_snippet[:600] + chr(10) +
-            'List as: 1. <action> in <file>. 2. ... 3. ...'
+            'List 3 short code improvements for this Python snippet.' + chr(10) +
+            'File: ' + target + chr(10) +
+            snippet[:500] + chr(10) + chr(10) +
+            'Format: one line each. Start each with Add/Fix/Use/Refactor/Remove. No markdown.' + chr(10) +
+            '1.'
         )
-        response = self.inference.generate(prompt, max_tokens=200)
-        return response.split(chr(10)) if response else []
+        response = self.inference.generate(prompt, max_tokens=120)
+        if not response:
+            return []
+        items = []
+        for line in response.splitlines():
+            line = line.strip()
+            if line and (line[0].isdigit() or
+                         any(line.startswith(w) for w in ('Add', 'Fix', 'Use', 'Refactor', 'Remove'))):
+                clean = line.lstrip('0123456789. ')
+                if len(clean) > 10:
+                    items.append(clean)
+        return items[:3]
+
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
         prompt = (
@@ -433,9 +462,23 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         if not goal_text:
             return None
 
+        goal_desc = goal_text.strip().splitlines()[0][:200]
+        preamble_words = ("here is", "here are", "i will", "sure,", "of course", "python script")
+        if any(goal_desc.lower().startswith(p) for p in preamble_words):
+            for _gl in goal_text.strip().splitlines():
+                _gl = _gl.strip()
+                if _gl and not any(_gl.lower().startswith(p) for p in preamble_words):
+                    goal_desc = _gl[:200]
+                    break
+
+        # Reject goals that look like code — fall back to the category template
+        code_markers = ('def ', 'import ', 'response = ', '```', 'requests.get', '#!/')
+        if any(m in goal_desc for m in code_markers) or goal_desc.count(':') > 3:
+            goal_desc = cat
+
         goal = {
             "id": (max((g["id"] for g in self.state["goals"]), default=0) + 1),
-            "description": goal_text.strip().splitlines()[0][:300],
+            "description": goal_desc,
             "status": "active",
             "created_iteration": self.state["iterations"] + 1,
             "progress_log": []
@@ -899,12 +942,6 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
             logger.info("Pre-warming Ollama model...")
             self.inference.ollama.generate("ping", max_tokens=1)
 
-        # Check for and respond to incoming Telegram messages
-        try:
-            self.telegram.handle_updates()
-        except Exception as e:
-            logger.error(f"Telegram update handling failed: {e}")
-
         # Build Discord message for this iteration
         discord_message = f"🤖 **Iteration {iteration_num}**\n"
 
@@ -1122,9 +1159,12 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         telegram_ok = self.telegram.send_message_sync(discord_message)
         logger.info(f"Telegram message sent: {telegram_ok}")
 
-        # Commit state to repo
+        # Commit state to repo and push to GitHub if token is configured
         msg = f"Iteration {self.state['iterations']}: improvements={len(improvements) if improvements else 0}, funding_ops={len(self.funding_tracker.opportunities)}"
         self.git.commit(msg)
+        if os.getenv("GITHUB_TOKEN"):
+            push_ok = self.git.push()
+            logger.info(f"GitHub push: {'ok' if push_ok else 'failed'}")
 
 if __name__ == "__main__":
     agent = AutonomousAgent()

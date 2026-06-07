@@ -620,6 +620,111 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
         logger.info(f"Tool result: {result[:100]}")
         return f"{tool_name}: {result[:200]}"
 
+    def self_edit_file(self, file_name: str, change_desc: str):
+        """Apply a targeted improvement to a repo file. Generates a new function,
+        replaces existing one by name or appends. Validates syntax and commits."""
+        import ast as _ast, shutil as _shutil, re as _re
+        from pathlib import Path as _Path
+
+        allowed = {'agent.py', 'inference.py', 'tools.py', 'planner.py', 'learning.py', 'comms.py'}
+        if file_name not in allowed:
+            return "Blocked: " + file_name + " not in allowed set"
+
+        target = _Path(self.repo_path) / file_name
+        if not target.exists():
+            return "File not found: " + file_name
+
+        try:
+            original = target.read_text(encoding='utf-8')
+        except Exception as e:
+            return "Read error: " + str(e)
+
+        prompt = (
+            'Write ONE improved Python utility function for a Raspberry Pi AI agent.' + chr(10) +
+            'Improvement needed: ' + change_desc[:200] + chr(10) +
+            'Rules: return ONLY the function (def ...). No markdown. No extra imports. Under 25 lines.' + chr(10) +
+            'def '
+        )
+        try:
+            raw = self.inference.generate_code(prompt, max_tokens=350)
+        except Exception as e:
+            return "LLM error: " + str(e)
+
+        if not raw or len(raw.strip()) < 15:
+            return "Empty LLM response"
+
+        new_code = raw.strip()
+        if new_code.startswith('```'):
+            new_code = chr(10).join(l for l in new_code.splitlines()
+                                     if not l.strip().startswith('```')).strip()
+
+        # Prepend the 'def' we used as completion anchor (only if stripped)
+        if not new_code.startswith('def ') and not new_code.startswith('async def '):
+            new_code = 'def ' + new_code
+
+        try:
+            _ast.parse(new_code)
+        except SyntaxError as e:
+            return "SyntaxError in generated code: " + str(e)
+
+        func_m = _re.search(r'^def (\w+)', new_code)
+        if not func_m:
+            return "No def found in generated code"
+        func_name = func_m.group(1)
+
+        # Line-based function replacement
+        orig_lines = original.splitlines(keepends=True)
+        new_func_lines = new_code.splitlines(keepends=True)
+        # Ensure trailing newline
+        if new_func_lines and not new_func_lines[-1].endswith(chr(10)):
+            new_func_lines[-1] += chr(10)
+
+        # Find existing function by scanning for '    def func_name(' at class indent
+        method_start = None
+        method_end = None
+        search_sig = '    def ' + func_name + '('
+        for i, line in enumerate(orig_lines):
+            if line.startswith(search_sig):
+                method_start = i
+                # Find end: next '    def ' at same indent or end of file
+                for j in range(i + 1, len(orig_lines)):
+                    if orig_lines[j].startswith('    def ') and not orig_lines[j].startswith('        '):
+                        method_end = j
+                        break
+                if method_end is None:
+                    method_end = len(orig_lines)
+                break
+
+        if method_start is not None:
+            # Replace existing method — indent new function to 4 spaces
+            indented = ['    ' + l if l.strip() else l for l in new_func_lines]
+            new_lines = orig_lines[:method_start] + indented + [chr(10)] + orig_lines[method_end:]
+            action = "replaced " + func_name + "()"
+        else:
+            # Append as new standalone utility at module level
+            new_lines = orig_lines + [chr(10)] + new_func_lines
+            action = "appended " + func_name + "()"
+
+        new_content = ''.join(new_lines)
+
+        try:
+            _ast.parse(new_content)
+        except SyntaxError as e:
+            return "Patch broke file syntax: " + str(e)
+
+        backup = str(target) + '.bak'
+        _shutil.copy2(str(target), backup)
+        target.write_text(new_content, encoding='utf-8')
+
+        git = GitController(self.repo_path)
+        msg = ('self-edit: ' + file_name + ' — ' + change_desc[:80] +
+               chr(10) + chr(10) + '[freeWill autonomous commit]')
+        git.commit(msg)
+
+        logger.info("self_edit: " + action + " in " + file_name)
+        return action + " in " + file_name
+
+
     def self_modify(self) -> Optional[str]:
         """Attempt to improve own code: generate patch, test, apply if passes."""
         try:
@@ -819,6 +924,21 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
                     test_result = self.test_code_improvement(code_file)
                     self.state["last_test_result"] = test_result[:60]
                     discord_message += f"💻 **Code written + tested:** {test_result[:100]}\n"
+                    # If test passed and think() gave a JSON suggestion, try live self-edit
+                    if test_result.startswith('PASSED'):
+                        decision_raw = self.state.get('last_think_raw', '')
+                        if decision_raw and '|' in decision_raw:
+                            parts = decision_raw.replace('FILE: ', '').split('|', 1)
+                            if len(parts) == 2:
+                                edit_file = parts[0].strip()
+                                edit_desc = parts[1].strip()
+                                try:
+                                    edit_result = self.self_edit_file(edit_file, edit_desc)
+                                    if edit_result:
+                                        discord_message += f"🧬 **Self-edit:** {edit_result}\n"
+                                        logger.info(f"Self-edit applied: {edit_result}")
+                                except Exception as _se:
+                                    logger.warning(f"self_edit_file error: {_se}")
 
         # Check funding opportunities
         funding_landscape = analyze_funding_landscape()

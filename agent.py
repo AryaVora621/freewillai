@@ -267,13 +267,15 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         return response.split(chr(10)) if response else []
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
-        prompt = f"""Write a Python function implementing this improvement for a Raspberry Pi AI agent:
-{suggestion[:250]}
-
-Rules: raw Python only, no markdown, no triple backticks, no imports outside stdlib.
-Start directly with `def ` or `class `. Under 25 lines. Short docstring on first line."""
-
-        code = self.inference.generate_code(prompt, max_tokens=250)
+        prompt = (
+            'Write ONE complete Python function for a Raspberry Pi AI agent.' + chr(10) +
+            'Improvement: ' + suggestion[:200] + chr(10) +
+            'Rules: complete function only, no markdown, no imports outside stdlib, end with newline.' + chr(10) +
+            'def '
+        )
+        code = self.inference.generate_code(prompt, max_tokens=500)
+        if code and not code.startswith('def '):
+            code = 'def ' + code
         if not code or len(code.strip()) < 20:
             return None
 

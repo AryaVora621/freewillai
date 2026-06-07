@@ -86,24 +86,27 @@ class OpenRouterClient:
 
     # Free models that support structured/JSON output, in preference order
     FREE_MAIN_MODELS = [
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "moonshotai/kimi-k2.6:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
         "openai/gpt-oss-120b:free",
         "meta-llama/llama-3.3-70b-instruct:free",
-        "nvidia/nemotron-3-8b-super:free",
-        "google/gemma-3-27b-it:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
         "qwen/qwen3-30b-a3b:free",
     ]
     FREE_CODE_MODELS = [
-        "qwen/qwen3-coder:free",
+        "qwen/qwen3-coder-turbo:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
         "openai/gpt-oss-120b:free",
         "meta-llama/llama-3.3-70b-instruct:free",
-        "nvidia/nemotron-3-8b-super:free",
+        "moonshotai/kimi-k2.6:free",
     ]
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
         self.eval_model = os.getenv("OPENROUTER_EVAL_MODEL", self.model)
-        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder:free")
+        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder-turbo:free")
         self.base_url = "https://openrouter.ai/api/v1"
         self._rate_limited_models = set()
 

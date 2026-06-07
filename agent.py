@@ -121,39 +121,59 @@ class AutonomousAgent:
             json.dump(self.state, f, indent=2)
 
     def think(self, goal: str) -> str:
-        """Use local model to decide next concrete action."""
+        """Generate a concrete, single-step code modification suggestion."""
         import os as _os
+        import json as _json
+
         try:
             py_files = [f for f in _os.listdir(self.repo_path) if f.endswith('.py')][:5]
-            files_list = '/'.join(py_files)
+            files_list = chr(10).join(py_files)
         except Exception:
-            files_list = 'agent.py/inference.py/tools.py'
-        recent_test = self.state.get('last_test_result', 'none')[:30]
+            files_list = 'agent.py inference.py tools.py'
+
+        recent_test = self.state.get('last_test_result', 'none')[:100]
+
         prompt = (
-            'Agent task: suggest one code change.' + chr(10) +
-            'Repo: ' + files_list + chr(10) +
-            'Goal: ' + goal[:60] + chr(10) +
-            'Last result: ' + recent_test + chr(10) +
-            'Answer format: filename.py | what to change' + chr(10) +
-            'Answer: '
+            'You are a code improvement agent.' + chr(10) +
+            'Repo files: ' + files_list + chr(10) +
+            'Goal: ' + goal[:80] + chr(10) +
+            'Last test: ' + recent_test + chr(10) +
+            'Respond with JSON only: {"file":"filename.py","change":"what to change","rationale":"why"}' + chr(10) +
+            'JSON:'
         )
-        response = self.inference.generate(prompt, max_tokens=50)
-        if not response:
-            return 'agent.py | improve error handling'
-        resp = response.strip().splitlines()[0].strip()
-        if '|' in resp and any(resp.startswith(f) for f in files_list.split('/')):
-            return 'FILE: ' + resp
-        if resp.startswith('FILE:'):
-            return resp
-        # Filter safety refusals
-        refuse_phrases = ["i can't", "i cannot", "unable to", "not able to", "sorry"]
-        if any(p in resp.lower() for p in refuse_phrases):
+
+        try:
+            raw_output = self.inference.generate(prompt, max_tokens=120)
+        except Exception as e:
             return 'FILE: agent.py | add retry logic to inference fallback'
-        if '|' in resp and any(resp.startswith(f) for f in files_list.split('/')):
-            return 'FILE: ' + resp
-        if resp.startswith('FILE:'):
-            return resp
-        return 'FILE: agent.py | ' + resp[:60]
+
+        if not raw_output:
+            return 'FILE: agent.py | improve error handling'
+
+        resp = raw_output.strip()
+
+        # Try JSON parse first
+        try:
+            # Strip markdown fences
+            if resp.startswith('```'):
+                lines = resp.split(chr(10))
+                resp = chr(10).join(l for l in lines if not l.startswith('```')).strip()
+            suggestion = _json.loads(resp)
+            fname = suggestion.get('file', 'agent.py')
+            change = suggestion.get('change', 'improve error handling')
+            return 'FILE: ' + fname + ' | ' + change[:80]
+        except Exception:
+            pass
+
+        # Fallback: filter refusals
+        refuse_phrases = ["i can't", "i cannot", "unable to", "not able to", "sorry"]
+        first_line = resp.splitlines()[0].strip()
+        if any(p in first_line.lower() for p in refuse_phrases):
+            return 'FILE: agent.py | add retry logic to inference fallback'
+
+        if '|' in first_line:
+            return 'FILE: ' + first_line if not first_line.startswith('FILE:') else first_line
+        return 'FILE: agent.py | ' + first_line[:60]
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
         # Strip FILE: prefix for cleaner evaluation

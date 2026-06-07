@@ -173,3 +173,45 @@ chmod +x collect_metrics.sh
 After confirming the files exist, you can begin parsing them with Python to pinpoint high‑CPU or I/O hotspots.
 
 ****
+
+## Iteration 95 — 2026-06-07T18:27:45.614630
+
+**Next Concrete Step – Run the metric‑collection script and archive the results**
+
+1. Save the script below as `collect_metrics.sh` in the project root and make it executable:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+mkdir -p metrics
+TS=$(date +%Y%m%d_%H%M%S)
+
+# CPU & memory snapshot
+top -b -n1 > "metrics/top_${TS}.txt"
+
+# Disk I/O stats (5‑second interval, 3 samples)
+iostat -d 5 3 > "metrics/iostat_${TS}.txt"
+
+# Memory summary
+free -h > "metrics/free_${TS}.txt"
+```
+
+2. Run the script:
+
+```bash
+chmod +x collect_metrics.sh
+./collect_metrics.sh
+```
+
+3. Verify that three files (`top_*.txt`, `iostat_*.txt`, `free_*.txt`) appear in the `metrics/` directory.
+
+4. Archive the metrics for later analysis:
+
+```bash
+tar -czf metrics_${TS}.tar.gz metrics/
+```
+
+Now you have a reproducible snapshot of CPU, memory, and disk I/O to review before optimizing the Python code.
+
+****

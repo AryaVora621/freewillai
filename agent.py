@@ -268,14 +268,21 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
         prompt = (
-            'Write ONE complete Python function for a Raspberry Pi AI agent.' + chr(10) +
-            'Improvement: ' + suggestion[:200] + chr(10) +
-            'Rules: complete function only, no markdown, no imports outside stdlib, end with newline.' + chr(10) +
+            'Write a short Python function (max 20 lines) for a Raspberry Pi.' + chr(10) +
+            'Task: ' + suggestion[:120] + chr(10) +
+            'STRICT RULES: max 20 lines total, no docstring longer than 1 line, stdlib only.' + chr(10) +
+            'STOP after the closing return statement. No extra code.' + chr(10) +
             'def '
         )
-        code = self.inference.generate_code(prompt, max_tokens=500)
+        code = self.inference.generate_code(prompt, max_tokens=400)
         if code and not code.startswith('def '):
             code = 'def ' + code
+        # Truncate to max 25 lines to prevent incomplete code
+        if code:
+            code_lines = code.splitlines()
+            if len(code_lines) > 25:
+                # Find last complete statement before line 25
+                code = chr(10).join(code_lines[:22]) + chr(10)
         if not code or len(code.strip()) < 20:
             return None
 
@@ -829,13 +836,15 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         # Focus on the autonomous_action and think methods (most impactful)
         snippet = src[src.find("def think("):src.find("def seek_improvements(")]
         prompt = (
-            "You are improving a Python AI agent. Here is a method:" + chr(10) +
-            snippet[:500] + chr(10) + chr(10) +
-            "Write ONE improved version of the think() method that generates more specific, actionable outputs." + chr(10) +
-            "Return ONLY the complete def think(self, goal: str) -> str: block, no markdown, no explanation." + chr(10) +
-            "It must start with: def think(self, goal: str) -> str:"
+            'Improve this Python method (max 30 lines).' + chr(10) +
+            'Current code:' + chr(10) + snippet[:400] + chr(10) +
+            'Return ONLY the complete improved method. No markdown. No explanation.' + chr(10) +
+            'Start with: def think(self, goal: str) -> str:' + chr(10) +
+            'def think(self, goal: str) -> str:'
         )
-        new_code = self.inference.generate_code(prompt, max_tokens=300)
+        new_code = self.inference.generate_code(prompt, max_tokens=500)
+        if new_code and not new_code.startswith('def '):
+            new_code = 'def think(self, goal: str) -> str:' + chr(10) + new_code
         if not new_code or "def think" not in new_code:
             return None
 

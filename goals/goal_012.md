@@ -357,3 +357,48 @@ These artifacts will be the basis for the technical analysis and subsequent refa
 Now you have a complete, version‑controlled snapshot of code‑quality metrics ready for review.
 
 ****
+
+## Iteration 80 — 2026-06-07T11:28:39.171402
+
+**Next Concrete Step – Execute Full Static‑Analysis Suite and Archive All Results**
+
+1. **Activate the virtual environment** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Create a timestamped report directory**  
+   ```bash
+   REPORT_DIR=analysis_reports/$(date +%Y%m%d_%H%M%S)
+   mkdir -p "$REPORT_DIR"
+   ```
+
+3. **Run the analysis tools and store their outputs**  
+   ```bash
+   # flake8 (style)
+   flake8 . > "$REPORT_DIR/flake8_report.txt" 2>&1
+
+   # pylint (code quality)
+   pylint $(git ls-files '*.py') > "$REPORT_DIR/pylint_report.txt" 2>&1
+
+   # bandit (security)
+   bandit -r . -f txt -o "$REPORT_DIR/bandit_report.txt"
+
+   # radon (complexity)
+   radon cc -s -a . > "$REPORT_DIR/radon_cc.txt"
+   radon mi . > "$REPORT_DIR/radon_maintainability.txt"
+   ```
+
+4. **Compress the reports for easy sharing**  
+   ```bash
+   tar -czf "$REPORT_DIR.tar.gz" -C "$(dirname "$REPORT_DIR")" "$(basename "$REPORT_DIR")"
+   echo "All analysis reports archived at $REPORT_DIR.tar.gz"
+   ```
+
+5. **(Optional) Push the archive to a remote backup**  
+   ```bash
+   # Example using rsync to a backup server
+   rsync -avz "$REPORT_DIR.tar.gz" user@backup.example.com:/path/to/backups/
+   ```
+
+Run the script above; it will produce a complete, timestamped set of static‑analysis reports ready for review or archiving.

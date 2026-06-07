@@ -10,7 +10,7 @@ INTERVAL=${AGENT_ITERATION_INTERVAL:-600}
 
 while true; do
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running iteration..."
-    python3 agent.py 2>&1 | sed 's/^/  /'
+    python3 -u agent.py 2>&1 | sed -u 's/^/  /'
     echo "[$(date +'%Y-%m-%d %H:%M:%S')] Sleeping ${INTERVAL}s (touch .run_now to skip)..."
     elapsed=0
     while [ $elapsed -lt $INTERVAL ]; do

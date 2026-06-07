@@ -656,15 +656,47 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
             except Exception as e:
                 return f'Error: {e}'
 
+        if cmd in ("/stats",):
+            import subprocess as _sp, os as _os
+            iters = self.state.get("iterations", 0)
+            goals_done = sum(1 for g in self.state.get("goals", []) if g.get("status") == "completed")
+            goals_total = len(self.state.get("goals", []))
+            active_goal = next((g["description"][:60] for g in self.state.get("goals", [])
+                                if g.get("status") == "active"), "none")
+            improvements = len(self.state.get("improvements_made", []))
+            applied_mods = len(list(Path(self.repo_path).glob("improvements/self_mod_*.py")))
+            score = self.learning.calculate_improvement_score()
+            try:
+                cpu = _sp.check_output(
+                    "top -bn1 | grep 'Cpu(s)' | awk '{print $2}'",
+                    shell=True, text=True, timeout=3).strip()
+                mem = _sp.check_output(
+                    "free -m | awk 'NR==2{printf \"%sMB / %sMB\", $3, $2}'",
+                    shell=True, text=True, timeout=3).strip()
+            except Exception:
+                cpu, mem = "?", "?"
+            return (
+                f"freeWill Stats -- Iteration {iters}" + chr(10) +
+                f"Goals: {goals_done}/{goals_total} done" + chr(10) +
+                f"Active: {active_goal}" + chr(10) +
+                f"Improvements stored: {improvements}" + chr(10) +
+                f"Self-mods staged: {applied_mods}" + chr(10) +
+                f"Score: {score:.0%}" + chr(10) +
+                f"Backend: {self.inference.active_backend}" + chr(10) +
+                f"CPU: {cpu}%  RAM: {mem}"
+            )
+
         if cmd in ("/help",):
             return (
                 "/status -- iteration count and active goal" + chr(10) +
+                "/stats -- full stats: iterations, goals, improvements, CPU/RAM" + chr(10) +
                 "/goal -- list recent goals" + chr(10) +
                 "/models -- active model config" + chr(10) +
                 "/memory -- show KV memory" + chr(10) +
                 "/log -- recent daemon log" + chr(10) +
                 "/think -- generate a thought" + chr(10) +
                 "/run -- trigger an immediate iteration" + chr(10) +
+                "/test -- test all tools are working" + chr(10) +
                 "/shell <cmd> -- run shell command on Pi" + chr(10) +
                 "/py <code> -- run Python code on Pi" + chr(10) +
                 "/git <args> -- git command in repo" + chr(10) +
@@ -985,9 +1017,13 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         discord_message = f"🤖 **Iteration {iteration_num}**\n"
 
         # Think about goals and next steps
-        decision = self.think("What should I prioritize to improve myself?")
+        active_goal_desc = next((g["description"] for g in self.state.get("goals", [])
+                                 if g.get("status") == "active"), "improve myself")
+        decision = self.think(active_goal_desc)
         logger.info(f"Decision: {decision[:100]}...")
         discord_message += f"\n💭 **Decision:** {decision[:150]}...\n"
+        # Store raw decision for self_edit_file pipeline
+        self.state["last_think_raw"] = decision
 
         # If the decision mentions looking something up, do a web search for grounding
         research_terms = ["python", "ollama", "raspberry pi", "llm", "inference", "pytorch", "quantiz"]
@@ -1129,9 +1165,15 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
                                 edit_desc = parts[1].strip()
                                 try:
                                     edit_result = self.self_edit_file(edit_file, edit_desc)
-                                    if edit_result:
+                                    if edit_result and "Applied" in edit_result:
                                         discord_message += f"🧬 **Self-edit:** {edit_result}\n"
                                         logger.info(f"Self-edit applied: {edit_result}")
+                                        # Commit the successful self-edit
+                                        commit_msg = f"agent: self-edit iter {self.state['iterations']} — {edit_desc[:60]}"
+                                        committed = self.git.commit(commit_msg)
+                                        if committed:
+                                            logger.info(f"Self-edit committed to git")
+                                            discord_message += "   Committed to git\n"
                                 except Exception as _se:
                                     logger.warning(f"self_edit_file error: {_se}")
 
@@ -1208,3 +1250,22 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
 if __name__ == "__main__":
     agent = AutonomousAgent()
     agent.run_iteration()
+
+def decide_action(sensor_data, policy_net, epsilon=0.1, temp=1.0):
+    """Selects action using epsilon-greedy with Boltzmann exploration for continuous control."""
+    import random, math
+    if random.random() < epsilon:
+        return [random.uniform(-1, 1) for _ in range(policy_net.output_dim)]
+    
+    logits = policy_net.forward(sensor_data)
+    probs = [math.exp(l / temp) for l in logits]
+    total = sum(probs)
+    probs = [p / total for p in probs]
+    
+    r = random.random()
+    cum = 0.0
+    for i, p in enumerate(probs):
+        cum += p
+        if r < cum:
+            return policy_net.decode_action(i)
+    return policy_net.decode_action(len(probs) - 1)

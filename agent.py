@@ -403,20 +403,24 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         recent = ", ".join(g["description"][:40] for g in self.state["goals"][-3:])
         # Suggest goals oriented toward genuine autonomy and self-improvement
         goal_categories = [
-            "Improve inference speed or quality on this Raspberry Pi",
-            "Expand my tool capabilities (new tool type or smarter routing)",
-            "Improve my own decision-making or self-evaluation accuracy",
-            "Establish a communication channel or monitoring capability",
-            "Optimize memory usage or reduce iteration failures",
+            "Reduce iteration failures: add better error handling and retries to inference.py",
+            "Add a git auto-push to GitHub after each autonomous commit (requires SSH key setup)",
+            "Create a health monitoring script that tracks CPU/memory/disk and alerts via Telegram",
+            "Improve think() output quality: measure how often LLM suggestions are applied vs rejected",
+            "Write a script to automatically pull and benchmark new Ollama models from the registry",
+            "Add a web dashboard endpoint to api_server.py showing real-time agent stats",
+            "Implement a learning feedback loop that scores past decisions by outcome",
         ]
         cat = goal_categories[self.state["iterations"] % len(goal_categories)]
         prompt = (
-            "You are " + self.personality.name + ", autonomous AI on a Raspberry Pi." + chr(10) +
-            "Completed goals: " + (recent or "none") + chr(10) +
-            "Focus area: " + cat + chr(10) +
-            "Write ONE specific, concrete goal in 1-2 sentences." + chr(10) +
-            "Must be achievable by writing Python code or shell commands on this Pi." + chr(10) +
-            "Goal: "
+            'Raspberry Pi project goal generator.' + chr(10) +
+            'Recent work: ' + (recent or 'none') + chr(10) +
+            'Focus: ' + cat + chr(10) +
+            'Write ONE specific, measurable goal in 1-2 sentences.' + chr(10) +
+            'Must be achievable by Python code or shell on a Raspberry Pi 4.' + chr(10) +
+            'Examples: "Add a health-check endpoint to api_server.py that returns cpu/mem stats"' + chr(10) +
+            '  or "Write a script that benchmarks ollama inference speed and saves results to memory/kv.json"' + chr(10) +
+            'Goal: '
         )
         goal_text = self.inference.generate(prompt, max_tokens=100)
         if not goal_text:
@@ -682,11 +686,21 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         return " | ".join(results) if results else "no steps executed"
 
     def autonomous_action(self, context: str) -> Optional[str]:
-        """Agent picks a tool autonomously based on context and executes it."""
-        prompt = f"""You are {self.personality.name}. {context}
-
-{TOOL_SCHEMA}"""
-        response = self.inference.generate_fast(prompt, max_tokens=60)
+        """Agent picks a tool autonomously and executes it with full Pi access."""
+        # Give agent a concrete list of useful actions to choose from
+        prompt = (
+            'You control a Raspberry Pi AI project. Pick ONE action to take now.' + chr(10) +
+            'Context: ' + context[:200] + chr(10) + chr(10) +
+            'Useful actions (pick the most relevant):' + chr(10) +
+            '  shell: run shell commands (git pull, pip install, ls, cat file, python3 script.py)' + chr(10) +
+            '  file_write: create or update a file in the repo' + chr(10) +
+            '  file_read: read a file to learn about it' + chr(10) +
+            '  web_fetch: fetch a URL for information' + chr(10) +
+            '  kv_set: store a value in memory' + chr(10) + chr(10) +
+            'Return JSON only: {"tool":"shell","args":{"cmd":"git status"}}' + chr(10) +
+            'JSON:'
+        )
+        response = self.inference.generate_fast(prompt, max_tokens=80)
         if not response:
             return None
         tool_call = parse_tool_call(response)

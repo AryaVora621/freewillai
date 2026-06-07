@@ -51,3 +51,17 @@ To proceed with enabling SSH and Wi-Fi (headless), I will:
 I will execute these steps by creating a new script (`enable_ssh.py`) that uses `balenaEtcher` to flash the image, mounts the partition, identifies the root file system, and creates the `ssh` file. I will then run this script after flashing the OS to ensure all necessary files are created.
 
 Next step: Write the `enable_ssh.py` script and execute it using Python.
+
+## Iteration 52 — 2026-06-07T00:26:18.321396
+
+To proceed with enabling SSH and Wi-Fi (headless), you need to perform the following steps:
+
+1. **Verify the Micro-SD Card Presence**: Use `sdcard_info` command to verify if a micro-SD card is inserted successfully.
+
+2. **Get the Boot Partition Information**: Run `blkid -d /boot/efi*` to identify the root file system on the boot partition.
+
+3. **Create the SSH File**: Write a Python script (`enable_ssh.py`) that will create an empty file named `ssh` in the root directory of the mounted partition using `sudo mkdir -p /media/sda1/ssh`.
+
+4. **Mount the Boot Partition and Create SSH Directory**: Use `sudo mount -o remount /dev/sdb1 /media/sda1` to mount the boot partition, and then use `sudo mkdir -p /media/sda1/ssh` to create an empty directory named `ssh` in the root of the mounted partition.
+
+This script will ensure that SSH and Wi-Fi settings are enabled on the headless Raspberry Pi.

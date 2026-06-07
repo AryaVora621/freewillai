@@ -211,3 +211,37 @@ These artifacts will guide the refactoring plan.
 These artifacts will give us a visual overview of module interactions and quantitative metrics to prioritize refactoring.
 
 ****
+
+## Iteration 76 — 2026-06-07T10:37:45.141233
+
+**Next Concrete Step – Run Static Analysis and Capture Results**
+
+1. **Activate the virtual environment** (if not already active)  
+   ```bash
+   source venv/bin/activate
+   ```
+
+2. **Install analysis tools**  
+   ```bash
+   pip install flake8 pylint
+   ```
+
+3. **Run flake8 and save the report**  
+   ```bash
+   flake8 . > flake8_report.txt
+   ```
+
+4. **Run pylint on all Python files and save the report**  
+   ```bash
+   pylint **/*.py > pylint_report.txt
+   ```
+
+5. **Open the reports** to review style violations, undefined names, and potential bugs.  
+   ```bash
+   less flake8_report.txt
+   less pylint_report.txt
+   ```
+
+*Once the reports are reviewed, we can prioritize fixes and move on to runtime testing or call‑graph generation.*
+
+****

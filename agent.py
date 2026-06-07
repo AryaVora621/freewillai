@@ -86,6 +86,7 @@ class AutonomousAgent:
         self.discord = DiscordBot()
         self.telegram = TelegramBot()
         self.telegram.set_callback(self.handle_telegram_message)
+        self.start_telegram_listener()
 
         self.state_file = Path(repo_path) / ".freeWill_state.json"
         self.repo_path = repo_path
@@ -780,6 +781,23 @@ End with STATUS: continue (more to do) or STATUS: complete (goal achieved)."""
         )
         logger.info(f"Self-modification staged: {staging.name}")
         return f"Staged self-mod proposal: {staging.name}"
+
+    def start_telegram_listener(self):
+        """Background thread: poll Telegram every 5 seconds and respond immediately."""
+        import threading, time as _time
+
+        def _poll():
+            while True:
+                try:
+                    self.telegram.handle_updates()
+                except Exception as e:
+                    logger.debug(f"Telegram poll error: {e}")
+                _time.sleep(5)
+
+        t = threading.Thread(target=_poll, daemon=True, name="telegram-listener")
+        t.start()
+        logger.info("Telegram listener thread started (5s poll)")
+
 
     def run_iteration(self):
         """One cycle of autonomous operation"""

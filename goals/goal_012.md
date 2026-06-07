@@ -279,3 +279,36 @@ These artifacts will give us a visual overview of module interactions and quanti
 Proceed to review the graph for hot paths, circular imports, or unexpected dependencies.
 
 ****
+
+## Iteration 78 — 2026-06-07T11:03:06.200398
+
+**Next Concrete Step – Capture Static‑Analysis & Call‑Graph Results**
+
+1. **Activate the venv** (if not already)  
+   ```bash
+   source ~/pi_project/venv/bin/activate
+   ```
+
+2. **Install required tools**  
+   ```bash
+   pip install --upgrade flake8 pylint pycallgraph2 graphviz
+   sudo apt-get update && sudo apt-get install -y graphviz   # system binaries
+   ```
+
+3. **Run flake8 & pylint, store reports**  
+   ```bash
+   flake8 . > flake8_report.txt
+   pylint $(git ls-files '*.py') > pylint_report.txt
+   ```
+
+4. **Generate a call‑graph for the main entry point** (replace with actual module)  
+   ```bash
+   pycallgraph graphviz --output-file=callgraph.png -- \
+       python -m my_pi_project.main
+   ```
+
+5. **Verify outputs** – ensure `flake8_report.txt`, `pylint_report.txt`, and `callgraph.png` appear in the project root.
+
+These artifacts will be the basis for the technical analysis and subsequent refactor planning.  
+
+****

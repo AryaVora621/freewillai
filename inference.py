@@ -159,6 +159,10 @@ class OpenRouterClient:
                     if attempt < 2:
                         time.sleep(wait)
                     continue
+                if resp.status_code == 404:
+                    # Model deprecated or not found — skip immediately, no retries
+                    logger.warning(f"OpenRouter 404 (deprecated/missing): {(model or self.model)}")
+                    break
                 logger.error(f"OpenRouter error: {resp.status_code} - {resp.text}")
                 return None
             # All 3 attempts failed -- mark this model as rate-limited and try alternates

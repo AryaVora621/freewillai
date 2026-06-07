@@ -61,11 +61,16 @@ def execute_tool(tool_name: str, args: dict, repo_path: str = "/home/pi/freeWill
             url = args.get("url", "")
             if not url.startswith("http"):
                 return "ERROR: invalid URL"
-            # Quick DNS check before full request
+            # Quick DNS check before full request (getaddrinfo has no timeout kwarg — use setdefaulttimeout)
             import socket, urllib.parse
             try:
                 host = urllib.parse.urlparse(url).netloc.split(':')[0]
-                socket.getaddrinfo(host, None, timeout=3)
+                old_timeout = socket.getdefaulttimeout()
+                socket.setdefaulttimeout(3)
+                try:
+                    socket.getaddrinfo(host, None)
+                finally:
+                    socket.setdefaulttimeout(old_timeout)
             except (socket.gaierror, OSError):
                 return f"ERROR: unresolvable host in {url}"
             resp = requests.get(url, timeout=10,

@@ -453,26 +453,25 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                 return active
 
         recent = ", ".join(g["description"][:40] for g in self.state["goals"][-3:])
-        # Suggest goals oriented toward genuine autonomy and self-improvement
+        # Pi 4-appropriate goals — no GPU, no Docker, no CUDA required
         goal_categories = [
-            "Reduce iteration failures: add better error handling and retries to inference.py",
-            "Add a git auto-push to GitHub after each autonomous commit (requires SSH key setup)",
-            "Create a health monitoring script that tracks CPU/memory/disk and alerts via Telegram",
-            "Improve think() output quality: measure how often LLM suggestions are applied vs rejected",
-            "Write a script to automatically pull and benchmark new Ollama models from the registry",
-            "Add a web dashboard endpoint to api_server.py showing real-time agent stats",
-            "Implement a learning feedback loop that scores past decisions by outcome",
+            "Add /health Telegram command returning CPU%, RAM%, disk%, uptime from /proc",
+            "Cache last 10 LLM responses in memory/response_cache.json to avoid duplicate API calls",
+            "Write a rate-limiter wrapper for OpenRouter calls (max 10 calls/min) to avoid 429 errors",
+            "Add git auto-push after each iteration commit using GITHUB_TOKEN from .env",
+            "Build a simple iteration stats tracker: save elapsed_ms, inference_calls, test_result per iteration",
+            "Add /history Telegram command showing last 5 iteration outcomes with test results",
+            "Implement goal outcome tracking: mark goals succeeded/failed based on test results",
+            "Add Ollama model auto-switcher: if smollm2 fails, fall back to qwen2.5:0.5b automatically",
         ]
         cat = goal_categories[self.state["iterations"] % len(goal_categories)]
         prompt = (
-            'Raspberry Pi project goal generator.' + chr(10) +
+            self.HARDWARE_CONTEXT + chr(10) + chr(10) +
             'Recent work: ' + (recent or 'none') + chr(10) +
-            'Focus: ' + cat + chr(10) +
-            'Write ONE specific, measurable goal in 1-2 sentences.' + chr(10) +
-            'Must be achievable by Python code or shell on a Raspberry Pi 4.' + chr(10) +
-            'Examples: "Add a health-check endpoint to api_server.py that returns cpu/mem stats"' + chr(10) +
-            '  or "Write a script that benchmarks ollama inference speed and saves results to memory/kv.json"' + chr(10) +
-            'Goal: '
+            'Focus area: ' + cat + chr(10) + chr(10) +
+            'Write ONE specific, measurable goal achievable in 1-2 iterations on this Pi.' + chr(10) +
+            'Be concrete: name the file, function, and expected output.' + chr(10) +
+            'Goal (1-2 sentences, no code, no markdown):'
         )
         goal_text = self.inference.generate(prompt, max_tokens=100)
         if not goal_text:

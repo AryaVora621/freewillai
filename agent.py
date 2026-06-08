@@ -452,8 +452,8 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             else:
                 return active
 
-        recent = ", ".join(g["description"][:40] for g in self.state["goals"][-3:])
-        # Pi 4-appropriate goals — no GPU, no Docker, no CUDA required
+        # Use predefined categories directly — avoids an LLM call for goal selection.
+        # Cycles deterministically so each iteration advances through the queue.
         goal_categories = [
             "Add /health Telegram command returning CPU%, RAM%, disk%, uptime from /proc",
             "Cache last 10 LLM responses in memory/response_cache.json to avoid duplicate API calls",
@@ -464,32 +464,14 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             "Implement goal outcome tracking: mark goals succeeded/failed based on test results",
             "Add Ollama model auto-switcher: if smollm2 fails, fall back to qwen2.5:0.5b automatically",
         ]
-        cat = goal_categories[self.state["iterations"] % len(goal_categories)]
-        prompt = (
-            self.HARDWARE_CONTEXT + chr(10) + chr(10) +
-            'Recent work: ' + (recent or 'none') + chr(10) +
-            'Focus area: ' + cat + chr(10) + chr(10) +
-            'Write ONE specific, measurable goal achievable in 1-2 iterations on this Pi.' + chr(10) +
-            'Be concrete: name the file, function, and expected output.' + chr(10) +
-            'Goal (1-2 sentences, no code, no markdown):'
-        )
-        goal_text = self.inference.generate(prompt, max_tokens=100)
-        if not goal_text:
-            return None
+        # Skip any category already completed
+        completed_descs = {g["description"] for g in self.state["goals"]
+                           if g.get("status") == "completed"}
+        remaining = [c for c in goal_categories if c not in completed_descs]
+        if not remaining:
+            remaining = goal_categories  # all done — cycle again
 
-        goal_desc = goal_text.strip().splitlines()[0][:200]
-        preamble_words = ("here is", "here are", "i will", "sure,", "of course", "python script")
-        if any(goal_desc.lower().startswith(p) for p in preamble_words):
-            for _gl in goal_text.strip().splitlines():
-                _gl = _gl.strip()
-                if _gl and not any(_gl.lower().startswith(p) for p in preamble_words):
-                    goal_desc = _gl[:200]
-                    break
-
-        # Reject goals that look like code — fall back to the category template
-        code_markers = ('def ', 'import ', 'response = ', '```', 'requests.get', '#!/')
-        if any(m in goal_desc for m in code_markers) or goal_desc.count(':') > 3:
-            goal_desc = cat
+        goal_desc = remaining[self.state["iterations"] % len(remaining)]
 
         goal = {
             "id": (max((g["id"] for g in self.state["goals"]), default=0) + 1),

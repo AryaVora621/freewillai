@@ -147,7 +147,7 @@ class OpenRouterClient:
         import hashlib
         return hashlib.md5((prompt[:500] + model).encode()).hexdigest()
 
-    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None, system: Optional[str] = None) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None, system: Optional[str] = None, allow_fallback: bool = True) -> Optional[str]:
         """Generate response from OpenRouter"""
         if not self.api_key:
             logger.warning("OPENROUTER_API_KEY not set")
@@ -222,6 +222,8 @@ class OpenRouterClient:
             active_model = model or self.model
             self._rate_limited_models.add(active_model)
             logger.error(f"OpenRouter rate-limited after retries, giving up on {active_model}")
+            if not allow_fallback:
+                return None
             # Try a different model from the pool if available
             all_models = self.FREE_MAIN_MODELS + self.FREE_CODE_MODELS
             for alt in all_models:
@@ -324,24 +326,23 @@ class HybridInferenceEngine:
         return self.generate(prompt, max_tokens=max_tokens)
 
     def generate_code(self, prompt: str, max_tokens: int = 300, system: Optional[str] = None) -> Optional[str]:
-        """Use the code-specialized model (qwen3-coder) for code generation tasks.
-        Falls back through FREE_CODE_MODELS only, skipping prose-only models.
+        """Use code-safe models only (never nemotron/prose-only models).
+        Manages its own fallback so generate() doesn't silently fall back to bad models.
         """
         if not self.openrouter.is_available():
-            return self.generate(prompt, max_tokens=max_tokens, system=system)
+            return None
         or_client = self.openrouter
-        # Try primary code model first
-        resp = or_client.generate(prompt, max_tokens=max_tokens, model=or_client.code_model, system=system)
-        if resp:
-            return resp
-        # Try code-safe fallbacks in order, skipping prose-only models
-        for alt in or_client.FREE_CODE_MODELS:
-            if alt == or_client.code_model or alt in or_client.PROSE_ONLY_MODELS:
+        # Try each code-safe model in priority order; skip prose-only and rate-limited
+        candidates = [or_client.code_model] + [
+            m for m in or_client.FREE_CODE_MODELS
+            if m != or_client.code_model and m not in or_client.PROSE_ONLY_MODELS
+        ]
+        for model_id in candidates:
+            if model_id in or_client.PROSE_ONLY_MODELS or model_id in or_client._rate_limited_models:
                 continue
-            if alt in or_client._rate_limited_models:
-                continue
-            logger.info(f"Code fallback: trying {alt}")
-            resp = or_client.generate(prompt, max_tokens=max_tokens, model=alt, system=system)
+            logger.debug(f"Code gen: trying {model_id}")
+            resp = or_client.generate(prompt, max_tokens=max_tokens, model=model_id,
+                                      system=system, allow_fallback=False)
             if resp:
                 return resp
         return None

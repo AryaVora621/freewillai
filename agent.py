@@ -886,6 +886,16 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         _shutil.copy2(str(target), backup)
         target.write_text(new_content, encoding='utf-8')
 
+        # Runtime import check -- catches errors that AST parse misses
+        import subprocess as _sp
+        check = _sp.run(
+            ['python3', '-c', f'import py_compile; py_compile.compile("{target}", doraise=True)'],
+            capture_output=True, text=True, timeout=10
+        )
+        if check.returncode != 0:
+            _shutil.copy2(backup, str(target))
+            return "Reverted: compile check failed — " + check.stderr.strip()[:100]
+
         git = GitController(self.repo_path)
         msg = ('self-edit: ' + file_name + ' — ' + change_desc[:80] +
                chr(10) + chr(10) + '[freeWill autonomous commit]')
@@ -1194,57 +1204,83 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             logger.info(f"GitHub push: {'ok' if push_ok else 'failed'}")
 
     def run_iteration_v2(self):
-        """OpenClaw-style iteration: focused THINK→IMPLEMENT→TEST→COMMIT.
-        Uses max 4 inference calls vs the original 8-10. One goal per iteration.
+        """OpenClaw-style iteration: focused THINK→PLAN→IMPLEMENT→TEST→COMMIT.
+        Max 3 inference calls. Blocks commit on test failure.
         """
         import time as _time
         iteration_num = self.state['iterations'] + 1
         logger.info(f"=== Iteration {iteration_num} (v2) ===")
         start_ts = _time.time()
 
-        # --- THINK (1 call) ---
+        # --- THINK (call 1): pick the active goal ---
         context_lines = [
             f"Iteration: {iteration_num}",
-            f"Recent decisions: {'; '.join(d['decision'][:60] for d in self.state.get('decisions', [])[-3:])}",
+            f"Recent: {'; '.join(d['decision'][:60] for d in self.state.get('decisions', [])[-3:])}",
             f"Last test: {self.state.get('last_test_result', 'none')}",
             f"Active goal: {self.state.get('active_goal_desc', 'none')}",
         ]
-        decision = self.think("\\n".join(context_lines))
-        logger.info(f"Decision: {decision[:120]}")
+        decision = self.think("\n".join(context_lines))
+        logger.info(f"THINK: {decision[:120]}")
 
-        # Safety gate
         evaluation = self.evaluate_decision(decision)
         if evaluation.get('safety', 5) < 3 or evaluation.get('ethics', 5) < 3:
-            logger.warning("Decision rejected (unsafe)")
+            logger.warning("Decision rejected (unsafe) — skipping iteration")
             self.state['iterations'] += 1
             self.save_state()
             return
 
-        # --- IMPLEMENT (1 call via work_on_goal or apply_code_improvement) ---
+        # --- PLAN: pick goal with highest priority ---
         goal = self.review_goals()
+        code_file = None
         result = None
         if goal:
             self.state['active_goal_desc'] = goal.get('description', '')[:80]
-            result = self.work_on_goal(goal)
-            if result:
-                logger.info(f"Goal #{goal['id']} result: {result[:80]}")
+            is_code_goal = any(w in goal['description'].lower()
+                               for w in ['implement', 'write', 'create', 'build', 'add', 'code',
+                                         'function', 'module', 'tracker', 'cache', 'rate', 'command'])
+            logger.info(f"PLAN: goal #{goal['id']} (code={is_code_goal}): {goal['description'][:80]}")
 
-        # --- TEST (lightweight: syntax check + import) ---
+            # --- IMPLEMENT (call 2): generate code or prose ---
+            if is_code_goal:
+                # apply_code_improvement saves to improvements/iter_XXX.py for testing
+                code = self.apply_code_improvement(goal['description'])
+                improvements_dir = Path(self.repo_path) / "improvements"
+                candidate = improvements_dir / f"iter_{iteration_num:03d}.py"
+                if candidate.exists():
+                    code_file = str(candidate)
+                    result = code
+                    logger.info(f"IMPLEMENT: wrote {candidate.name}")
+                else:
+                    result = code
+            else:
+                result = self.work_on_goal(goal)
+                if result:
+                    logger.info(f"IMPLEMENT: goal #{goal['id']} prose result written")
+
+        # --- TEST: run the generated file, block commit if it fails ---
         test_status = "SKIPPED"
-        improvements_dir = Path(self.repo_path) / "improvements"
-        code_file = str(improvements_dir / f"iter_{iteration_num:03d}.py")
-        if Path(code_file).exists():
+        if code_file and Path(code_file).exists():
             test_status = self.test_code_improvement(code_file)
             self.state['last_test_result'] = test_status[:60]
-            logger.info(f"Test: {test_status}")
+            logger.info(f"TEST: {test_status}")
+            if test_status.startswith("FAIL"):
+                # Don't commit broken code -- save state only
+                logger.warning(f"Test failed — skipping commit this iteration")
+                self.state['iterations'] += 1
+                self.state['last_run'] = datetime.now().isoformat()
+                self.save_state()
+                self.telegram.send_message_sync(
+                    f"Iter {iteration_num} | TEST FAILED\n{test_status[:120]}\nNo commit."
+                )
+                return
 
-        # --- SELF-MODIFY every 5th iteration (1 call) ---
+        # --- SELF-MODIFY every 5th iteration (call 3, optional) ---
         if iteration_num % 5 == 0:
             mod = self.self_modify()
             if mod:
-                logger.info(f"Self-mod: {mod}")
+                logger.info(f"SELF-MOD: {mod[:80]}")
 
-        # --- COMMIT ---
+        # --- COMMIT: state + code + goals ---
         elapsed = _time.time() - start_ts
         self.state['iterations'] += 1
         self.state['last_run'] = datetime.now().isoformat()
@@ -1257,22 +1293,21 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         self.save_state()
         self.learning.save_state()
 
-        msg = (f"Iteration {self.state['iterations']} v2: "
-               f"test={test_status[:20]}, elapsed={elapsed:.0f}s, "
-               f"goal={'ok' if result else 'none'}")
-        self.git.commit(msg)
+        commit_msg = (f"Iteration {self.state['iterations']} v2: "
+                      f"test={test_status[:20]}, {elapsed:.0f}s, "
+                      f"goal={'ok' if result else 'none'}")
+        self.git.commit(commit_msg)
         if os.getenv("GITHUB_TOKEN"):
             self.git.push()
 
-        # Telegram summary (single message, no Discord)
         summary = (
             f"Iter {self.state['iterations']} | {elapsed:.0f}s\n"
-            f"Decision: {decision[:100]}\n"
+            f"Goal: {self.state.get('active_goal_desc', 'none')[:80]}\n"
             f"Test: {test_status[:40]}\n"
             f"Backend: {self.inference.active_backend}"
         )
         self.telegram.send_message_sync(summary)
-        logger.info(f"v2 iteration done in {elapsed:.1f}s")
+        logger.info(f"v2 done in {elapsed:.1f}s")
 
 
 def startup_check(agent: 'AutonomousAgent') -> bool:

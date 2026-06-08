@@ -563,6 +563,18 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             lines = [f"#{g['id']} [{g['status']}] {g['description'][:80]}" for g in goals[-5:]]
             return chr(10).join(lines)
 
+        if cmd in ("/history", "/hist"):
+            import json as _j
+            stats_path = Path(self.repo_path) / "memory" / "iteration_stats.jsonl"
+            if not stats_path.exists():
+                return "No iteration history yet."
+            rows = [_j.loads(l) for l in stats_path.read_text().strip().splitlines()[-5:]]
+            lines = [
+                f"#{r['iter']} {r['elapsed_s']}s {r['test'][:12]} {r['goal'][:40]}"
+                for r in rows
+            ]
+            return "Last 5 iterations:" + chr(10) + chr(10).join(lines)
+
         if cmd in ("/models", "/model"):
             return (
                 f"Local: {self.inference.ollama.model} (eval: {self.inference.ollama.eval_model})" + chr(10) +
@@ -1275,6 +1287,9 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         self.save_state()
         self.learning.save_state()
 
+        # Append to stats file so the agent can review its own history
+        self._append_iteration_stats(iteration_num, elapsed, test_status, result)
+
         commit_msg = (f"Iteration {self.state['iterations']} v2: "
                       f"test={test_status[:20]}, {elapsed:.0f}s, "
                       f"goal={'ok' if result else 'none'}")
@@ -1290,6 +1305,24 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         )
         self.telegram.send_message_sync(summary)
         logger.info(f"v2 done in {elapsed:.1f}s")
+
+    def _append_iteration_stats(self, iteration_num: int, elapsed: float,
+                                 test_status: str, result):
+        """Append one row to memory/iteration_stats.jsonl for historical analysis."""
+        import json as _json
+        stats_path = Path(self.repo_path) / "memory" / "iteration_stats.jsonl"
+        stats_path.parent.mkdir(exist_ok=True)
+        row = {
+            "iter": iteration_num,
+            "elapsed_s": round(elapsed, 1),
+            "test": test_status[:40],
+            "goal": self.state.get("active_goal_desc", "")[:80],
+            "backend": self.inference.active_backend,
+            "result": "ok" if result else "none",
+            "ts": datetime.now().isoformat(),
+        }
+        with open(stats_path, "a") as f:
+            f.write(_json.dumps(row) + "\n")
 
 
 def startup_check(agent: 'AutonomousAgent') -> bool:

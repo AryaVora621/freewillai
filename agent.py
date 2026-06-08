@@ -1273,6 +1273,9 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                 if candidate.exists():
                     code_file = str(candidate)
                     result = code
+                    # Update goal progress log so it doesn't go stale
+                    goal["progress_log"].append(f"Generated code: {candidate.name}")
+                    goal["progress_log"] = goal["progress_log"][-5:]
                     logger.info(f"IMPLEMENT: wrote {candidate.name}")
                 else:
                     result = code
@@ -1297,6 +1300,10 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                     f"Iter {iteration_num} | TEST FAILED\n{test_status[:120]}\nNo commit."
                 )
                 return
+            elif goal and not test_status.startswith("SKIPPED"):
+                # Test passed — mark goal complete so cycling advances to next
+                goal["status"] = "completed"
+                logger.info(f"Goal #{goal['id']} marked complete (test passed)")
 
         # --- SELF-MODIFY every 5th iteration (call 3, optional) ---
         if iteration_num % 5 == 0:

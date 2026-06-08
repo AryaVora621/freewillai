@@ -366,11 +366,27 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         return code.strip()[:200]
 
     def test_code_improvement(self, code_file: str) -> str:
-        """Run a generated improvement file in a subprocess sandbox (5s timeout)."""
-        import subprocess
+        """Run a generated improvement file in a subprocess sandbox (5s timeout).
+        Tests: (1) file executes without error, (2) all defined functions are callable.
+        """
+        import subprocess, re as _re
         try:
+            # Build a test harness: exec the file then call each function with no args
+            # to catch NameError / import errors at call time
+            raw = open(code_file).read()
+            func_names = _re.findall(r'^def (\w+)\(', raw, _re.MULTILINE)
+            call_tests = "\n".join(
+                f"try:\n    {fn}()\nexcept TypeError:\n    pass  # args required, still callable"
+                for fn in func_names
+            )
+            test_script = f"""
+import sys
+exec(open({code_file!r}).read())
+{call_tests}
+print("OK: {len(func_names)} function(s) defined and callable")
+"""
             result = subprocess.run(
-                ["python3", "-c", f"exec(open('{code_file}').read())"],
+                ["python3", "-c", test_script],
                 capture_output=True, text=True, timeout=5,
                 stdin=subprocess.DEVNULL,
                 env={"PATH": "/usr/bin:/bin", "HOME": "/home/pi"}

@@ -457,14 +457,14 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         # Use predefined categories directly — avoids an LLM call for goal selection.
         # Cycles deterministically so each iteration advances through the queue.
         goal_categories = [
-            "Add /health Telegram command returning CPU%, RAM%, disk%, uptime from /proc",
-            "Cache last 10 LLM responses in memory/response_cache.json to avoid duplicate API calls",
-            "Write a rate-limiter wrapper for OpenRouter calls (max 10 calls/min) to avoid 429 errors",
-            "Add git auto-push after each iteration commit using GITHUB_TOKEN from .env",
-            "Build a simple iteration stats tracker: save elapsed_ms, inference_calls, test_result per iteration",
-            "Add /history Telegram command showing last 5 iteration outcomes with test results",
-            "Implement goal outcome tracking: mark goals succeeded/failed based on test results",
-            "Add Ollama model auto-switcher: if smollm2 fails, fall back to qwen2.5:0.5b automatically",
+            "Write function get_response_time_stats() that reads iteration_stats.jsonl and returns avg/p95 elapsed_s per backend",
+            "Add /code Telegram command showing last 3 self-edit commits: file changed, function name, git diff summary",
+            "Write function score_goal_difficulty(goal_desc) that returns 1-5 based on keywords: add=1, implement=2, build=3, rewrite=4, redesign=5",
+            "Add /reset Telegram command: abandon active goals and pick fresh category from next in queue",
+            "Write function monitor_openrouter_quota() that calls OpenRouter /auth/key to check remaining credits and logs warning if <10 calls left",
+            "Add response_time tracking to _append_iteration_stats: include openrouter_ms latency measured around generate() call",
+            "Write function generate_test_case(func_code) that produces a minimal assert-based test for a given function definition",
+            "Add /diff Telegram command showing git diff --stat HEAD~3..HEAD to summarize last 3 commits of changes",
         ]
         # Skip any category already completed
         completed_descs = {g["description"] for g in self.state["goals"]
@@ -1324,6 +1324,21 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         })
         self.state['decisions'] = self.state['decisions'][-10:]
         self.save_state()
+
+        # Record learning event so the learning system reflects actual outcomes
+        goal_desc = self.state.get('active_goal_desc', 'unknown goal')[:80]
+        if test_status.startswith("PASSED"):
+            self.learning.record_learning(LearningEvent(
+                "feature", f"v2 iter {iteration_num}: {goal_desc}", impact="positive"
+            ))
+        elif test_status.startswith("FAIL") or test_status.startswith("ERROR"):
+            self.learning.record_learning(LearningEvent(
+                "bug_fix", f"v2 iter {iteration_num}: test failed — {goal_desc}", impact="negative"
+            ))
+        elif test_status == "SKIPPED" and result:
+            self.learning.record_learning(LearningEvent(
+                "optimization", f"v2 iter {iteration_num}: {goal_desc}", impact="neutral"
+            ))
         self.learning.save_state()
 
         # Append to stats file so the agent can review its own history

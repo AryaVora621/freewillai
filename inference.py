@@ -128,12 +128,28 @@ class OpenRouterClient:
         self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder-turbo:free")
         self.base_url = "https://openrouter.ai/api/v1"
         self._rate_limited_models = set()
+        # Simple in-memory LRU cache: (prompt_hash, model) -> response
+        # Avoids duplicate API calls when the same prompt fires in quick succession
+        self._response_cache: dict = {}
+        self._cache_order: list = []
+        self._cache_max = 10
+
+    def _cache_key(self, prompt: str, model: str) -> str:
+        import hashlib
+        return hashlib.md5((prompt[:500] + model).encode()).hexdigest()
 
     def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None) -> Optional[str]:
         """Generate response from OpenRouter"""
         if not self.api_key:
             logger.warning("OPENROUTER_API_KEY not set")
             return None
+
+        # Cache hit -- skip API call for identical prompts
+        active_model = model or self.model
+        cache_key = self._cache_key(prompt, active_model)
+        if cache_key in self._response_cache:
+            logger.debug("OpenRouter cache hit")
+            return self._response_cache[cache_key]
 
         try:
             headers = {
@@ -156,7 +172,14 @@ class OpenRouterClient:
                     timeout=30
                 )
                 if resp.status_code == 200:
-                    return resp.json()["choices"][0]["message"]["content"]
+                    content = resp.json()["choices"][0]["message"]["content"]
+                    # Store in LRU cache (evict oldest if full)
+                    if len(self._cache_order) >= self._cache_max:
+                        old_key = self._cache_order.pop(0)
+                        self._response_cache.pop(old_key, None)
+                    self._response_cache[cache_key] = content
+                    self._cache_order.append(cache_key)
+                    return content
                 if resp.status_code == 429:
                     wait = 5
                     try:

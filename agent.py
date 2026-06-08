@@ -388,89 +388,45 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         return code.strip()[:200]
 
     def test_code_improvement(self, code_file: str) -> str:
-        """Run a generated improvement file in a sandboxed subprocess (5 s timeout).
-        Verifies the file imports, executes without error, and that each top‑level
-        function can be called with no arguments. Returns an error message or an empty
-        string on success.
+        """Execute a generated improvement file in a tightly‑controlled sandbox.
+        - 5 s wall‑clock timeout (detects hangs/infinite loops)
+        - Strict CPU & memory limits via ``resource``
+        - Runs in a separate process to avoid contaminating the parent.
+        Returns an empty string on success or a descriptive error message.
         """
-        import subprocess, pathlib, re, json, os, signal, resource, sys, textwrap, shlex, time
+        import pathlib, re, sys, json, multiprocessing as mp, resource, signal, os, traceback
 
-        # ---- 1️⃣ read source & discover top‑level functions -----------------
         src = pathlib.Path(code_file).read_text()
-        func_names = re.findall(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', src, re.MULTILINE)
+        func_names = re.findall(r'^def (\w+)\s*\(', src, re.MULTILINE)
 
-        # ---- 2️⃣ build a tiny harness that imports the module and calls each func ----
-        harness = textwrap.dedent(f'''
-            import importlib.util, sys, json, traceback
-            spec = importlib.util.spec_from_file_location("target_mod", {json.dumps(str(code_file))})
-            mod = importlib.util.module_from_spec(spec)
-            sys.modules["target_mod"] = mod
+        def _worker(q):
+            # Apply strict limits: 50 MB RSS, 2 s CPU time, no fork, no exec
+            resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
+            resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+            # Prevent creation of new processes
+            resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+            # Disable signals that could escape the sandbox
+            signal.signal(signal.SIGINT, signal.SIG_IGN)
             try:
-                spec.loader.exec_module(mod)
+                mod = {}
+                exec(src, mod)                     # load user code
+                for name in func_names:
+                    fn = mod.get(name)
+                    if not callable(fn):
+                        raise RuntimeError(f"'{name}' is not callable")
+                    fn()                           # call with no arguments
+                q.put("")                          # success
             except Exception:
-                print(json.dumps({{"error":"import_failed","trace":traceback.format_exc()}}))
-                sys.exit(1)
+                q.put(traceback.format_exc())
 
-            results = {{}}
-            for name in {json.dumps(func_names)}:
-                try:
-                    getattr(mod, name)()
-                    results[name] = "ok"
-                except Exception as e:
-                    results[name] = f"error: {{e}}"
-            print(json.dumps(results))
-        ''')
-
-        # ---- 3️⃣ write harness to a temporary file -----------------
-        harness_path = pathlib.Path("/tmp/harness_") .with_name(f"harness_{int(time.time()*1000)}.py")
-        harness_path.write_text(harness)
-
-        # ---- 4️⃣ sandbox limits (CPU time, memory, no file creation) ----------
-        def preexec():
-            # limit CPU time to 4 s (real time watchdog will enforce 5 s)
-            resource.setrlimit(resource.RLIMIT_CPU, (4, 4))
-            # limit address space to 64 MiB
-            resource.setrlimit(resource.RLIMIT_AS, (64*1024*1024, 64*1024*1024))
-            # drop privileges if possible
-            try:
-                os.setuid(os.getuid())
-            except Exception:
-                pass
-
-        # ---- 5️⃣ run harness with timeout and capture output -----------------
-        try:
-            proc = subprocess.run(
-                [sys.executable, str(harness_path)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=5,
-                preexec_fn=preexec,
-                check=False,
-                text=True,
-            )
-        except subprocess.TimeoutExpired:
-            return "Error: execution timed out (possible infinite loop)."
-        finally:
-            try:
-                harness_path.unlink()
-            except Exception:
-                pass
-
-        # ---- 6️⃣ interpret harness result ------------------------------------
-        if proc.returncode != 0:
-            try:
-                err = json.loads(proc.stdout.strip())
-                return f"Import error: {err.get('trace','')}"
-            except Exception:
-                return f"Runtime error: {proc.stderr.strip() or proc.stdout.strip()}"
-
-        try:
-            outcomes = json.loads(proc.stdout.strip())
-        except Exception:
-            return f"Failed to parse harness output: {proc.stdout[:200]}"
-
-        failures = [f"{n}: {msg}" for n, msg in outcomes.items() if not msg == "ok"]
-        return "" if not failures else "Function errors: " + "; ".join(failures)
+        q = mp.Queue()
+        proc = mp.Process(target=_worker, args=(q,))
+        proc.start()
+        proc.join(5)                               # wall‑clock timeout
+        if proc.is_alive():
+            proc.terminate()
+            return "Timeout: possible infinite loop or deadlock"
+        return q.get() or ""
 
     def web_search(self, query: str) -> Optional[str]:
         """Search the web via DuckDuckGo and fetch top result page text."""

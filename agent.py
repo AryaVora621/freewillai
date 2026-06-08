@@ -1317,6 +1317,11 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                 goal["status"] = "completed"
                 logger.info(f"Goal #{goal['id']} marked complete (test passed)")
 
+                # --- INTEGRATE: inject the function into agent.py if it's a new utility ---
+                # Only for "Write function X()" goals to avoid accidentally patching handlers
+                if code_file and goal.get('description', '').lower().startswith('write function'):
+                    self._integrate_improvement(code_file)
+
         # --- SELF-MODIFY every 5th iteration (call 3, optional) ---
         if iteration_num % 5 == 0:
             mod = self.self_modify()
@@ -1387,6 +1392,49 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         }
         with open(stats_path, "a") as f:
             f.write(_json.dumps(row) + "\n")
+
+    def _integrate_improvement(self, code_file: str):
+        """Inject a tested improvement function into agent.py as a new method.
+        Only runs if the function name doesn't already exist in the target file.
+        Safe: validates full-file syntax before writing; skips on any error.
+        """
+        import ast as _ast, re as _re, shutil as _sh
+        try:
+            code = Path(code_file).read_text()
+            # Find the first def in the improvement file
+            m = _re.search(r'^def (\w+)\(', code, _re.MULTILINE)
+            if not m:
+                return
+            func_name = m.group(1)
+
+            target = Path(self.repo_path) / "agent.py"
+            agent_src = target.read_text()
+
+            # Skip if this function already exists in agent.py
+            if f"def {func_name}(" in agent_src:
+                logger.info(f"INTEGRATE: {func_name}() already exists — skipping")
+                return
+
+            # Indent function to class method level (4 spaces per line)
+            func_lines = code.splitlines()
+            # Strip comment header lines at top
+            code_start = next((i for i, l in enumerate(func_lines) if l.startswith("def ")), 0)
+            indented = "\n".join("    " + l if l.strip() else "" for l in func_lines[code_start:])
+            new_src = agent_src.rstrip() + "\n\n" + indented + "\n"
+
+            # Validate before writing
+            try:
+                _ast.parse(new_src)
+            except SyntaxError as e:
+                logger.warning(f"INTEGRATE: syntax error in merged file — {e}")
+                return
+
+            _sh.copy2(str(target), str(target) + ".bak_integrate")
+            target.write_text(new_src)
+            logger.info(f"INTEGRATE: injected {func_name}() into agent.py")
+            self.git.commit(f"integrate: inject {func_name}() from improvements/ into agent.py")
+        except Exception as e:
+            logger.warning(f"INTEGRATE: error — {e}")
 
 
 def startup_check(agent: 'AutonomousAgent') -> bool:

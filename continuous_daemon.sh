@@ -1,24 +1,10 @@
 #!/bin/bash
-# Continuous daemon mode for freeWillAi — single-instance enforced via flock
+# Continuous daemon mode for freeWillAi
+# Supports trigger file for on-demand iteration
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TRIGGER="$REPO_DIR/.run_now"
-PIDFILE="$REPO_DIR/.daemon.pid"
-LOCKFILE="$REPO_DIR/.daemon.lock"
 cd "$REPO_DIR"
-
-# Kill any existing daemon and its children
-if [ -f "$PIDFILE" ]; then
-    OLD_PID=$(cat "$PIDFILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
-        echo "Stopping existing daemon (PID $OLD_PID) and its children..."
-        pkill -P "$OLD_PID" 2>/dev/null   # kill children first
-        kill "$OLD_PID" 2>/dev/null
-        sleep 2
-    fi
-fi
-pkill -f "python3 agent.py" 2>/dev/null
-sleep 1
 
 if [ -d "venv" ]; then
     source venv/bin/activate
@@ -30,22 +16,45 @@ echo "Trigger file: $TRIGGER (touch to run immediately)"
 echo ""
 
 {
-    # Acquire exclusive lock — second daemon instance blocks here, won't run the loop
-    exec 200>"$LOCKFILE"
-    flock -n 200 || { echo "[$(date +'%Y-%m-%d %H:%M:%S')] Another daemon is holding the lock — aborting."; exit 1; }
-
+    FIRST_RUN=1
     while true; do
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running iteration..."
-        PYTHONUNBUFFERED=1 python3 agent.py 2>&1 | sed 's/^/  /'
+
+        # Pass startup check flag on first run only
+        STARTUP_FLAG=""
+        if [ "$FIRST_RUN" = "1" ]; then
+            STARTUP_FLAG="AGENT_STARTUP_CHECK=1"
+            FIRST_RUN=0
+        fi
+
+        # Watchdog: kill agent.py + Ollama if iteration exceeds 5 minutes
+        env PYTHONUNBUFFERED=1 AGENT_V2=1 $STARTUP_FLAG python3 -u agent.py 2>&1 | sed -u 's/^/  /' &
+        AGENT_PID=$!
+        WATCHDOG_MAX=300  # 5 minutes max per iteration
+
+        elapsed_watch=0
+        while kill -0 $AGENT_PID 2>/dev/null && [ $elapsed_watch -lt $WATCHDOG_MAX ]; do
+            sleep 5
+            elapsed_watch=$((elapsed_watch + 5))
+        done
+
+        if kill -0 $AGENT_PID 2>/dev/null; then
+            echo "[$(date +'%Y-%m-%d %H:%M:%S')] WATCHDOG: iteration exceeded ${WATCHDOG_MAX}s — killing agent + Ollama"
+            kill -9 $AGENT_PID 2>/dev/null
+            pkill -9 -f 'ollama runner' 2>/dev/null
+            pkill -f 'ollama serve' 2>/dev/null
+        fi
+        wait $AGENT_PID 2>/dev/null
 
         INTERVAL=$(grep AGENT_ITERATION_INTERVAL .env 2>/dev/null | cut -d= -f2 | tr -d ' ' || echo 600)
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Sleeping ${INTERVAL}s (touch .run_now to skip)..."
 
+        # Sleep in 5s chunks, checking for trigger file
         elapsed=0
         while [ $elapsed -lt $INTERVAL ]; do
             if [ -f "$TRIGGER" ]; then
                 rm -f "$TRIGGER"
-                echo "[$(date +'%Y-%m-%d %H:%M:%S')] Trigger detected -- running now"
+                echo "[$(date +'%Y-%m-%d %H:%M:%S')] Trigger file detected -- running now"
                 break
             fi
             sleep 5
@@ -55,5 +64,5 @@ echo ""
 } >> daemon.log 2>&1 &
 
 PID=$!
-echo "$PID" > "$PIDFILE"
+echo "$PID" > .daemon.pid
 echo "Daemon started with PID $PID"

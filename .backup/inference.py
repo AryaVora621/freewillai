@@ -69,20 +69,12 @@ class OllamaClient:
                 "keep_alive": -1,
                 "options": {"num_predict": max_tokens}
             }
-            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=20)
+            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=45)
             if resp.status_code == 200:
                 return resp.json().get("response", "")
             else:
                 logger.error(f"Ollama error: {resp.status_code}")
                 return None
-        except requests.exceptions.Timeout:
-            logger.warning("Ollama timeout — killing background inference process to reclaim CPU")
-            try:
-                import subprocess as _sp
-                _sp.run(['pkill', '-f', 'ollama runner'], capture_output=True, timeout=2)
-            except Exception:
-                pass
-            return None
         except Exception as e:
             logger.error(f"Ollama connection error: {e}")
             return None
@@ -114,60 +106,26 @@ class OpenRouterClient:
         "qwen/qwen3-30b-a3b:free",
     ]
     FREE_CODE_MODELS = [
-        "qwen/qwen3-coder-turbo:free",
+        "qwen/qwen3-coder:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
         "openai/gpt-oss-120b:free",
-        "qwen/qwen3-30b-a3b:free",
         "meta-llama/llama-3.3-70b-instruct:free",
         "moonshotai/kimi-k2.6:free",
     ]
-    # These models return prose instead of code even with system prompts -- skip for code tasks
-    PROSE_ONLY_MODELS = {
-        "nvidia/nemotron-3-ultra-550b-a55b:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
-    }
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
         self.eval_model = os.getenv("OPENROUTER_EVAL_MODEL", self.model)
-        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder-turbo:free")
+        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder:free")
         self.base_url = "https://openrouter.ai/api/v1"
         self._rate_limited_models = set()
-        # Simple in-memory LRU cache: (prompt_hash, model) -> response
-        # Avoids duplicate API calls when the same prompt fires in quick succession
-        self._response_cache: dict = {}
-        self._cache_order: list = []
-        self._cache_max = 10
-        # Rate limiter: track call timestamps to proactively space requests
-        # OpenRouter free tier: ~10 req/min per model; stay under with 6s min gap
-        self._call_times: list = []
-        self._min_gap_s = float(os.getenv("OPENROUTER_MIN_GAP_S", "4"))
 
-    def _cache_key(self, prompt: str, model: str) -> str:
-        import hashlib
-        return hashlib.md5((prompt[:500] + model).encode()).hexdigest()
-
-    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None, system: Optional[str] = None) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None) -> Optional[str]:
         """Generate response from OpenRouter"""
         if not self.api_key:
             logger.warning("OPENROUTER_API_KEY not set")
             return None
-
-        # Cache hit -- skip API call for identical prompts
-        active_model = model or self.model
-        cache_key = self._cache_key(prompt + (system or ""), active_model)
-        if cache_key in self._response_cache:
-            logger.debug("OpenRouter cache hit")
-            return self._response_cache[cache_key]
-
-        # Proactive rate limiter: ensure min gap between calls
-        now = time.time()
-        self._call_times = [t for t in self._call_times if now - t < 60]
-        if self._call_times and (now - self._call_times[-1]) < self._min_gap_s:
-            wait = self._min_gap_s - (now - self._call_times[-1])
-            logger.debug(f"Rate limiter: sleeping {wait:.1f}s")
-            time.sleep(wait)
-        self._call_times.append(time.time())
 
         try:
             headers = {
@@ -176,13 +134,9 @@ class OpenRouterClient:
                 "HTTP-Referer": "https://github.com/aryavora/freeWillAi",
                 "X-Title": "freeWillAi"
             }
-            messages = []
-            if system:
-                messages.append({"role": "system", "content": system})
-            messages.append({"role": "user", "content": prompt})
             payload = {
                 "model": model or self.model,
-                "messages": messages,
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.7,
                 "max_tokens": max_tokens
             }
@@ -194,14 +148,7 @@ class OpenRouterClient:
                     timeout=30
                 )
                 if resp.status_code == 200:
-                    content = resp.json()["choices"][0]["message"]["content"]
-                    # Store in LRU cache (evict oldest if full)
-                    if len(self._cache_order) >= self._cache_max:
-                        old_key = self._cache_order.pop(0)
-                        self._response_cache.pop(old_key, None)
-                    self._response_cache[cache_key] = content
-                    self._cache_order.append(cache_key)
-                    return content
+                    return resp.json()["choices"][0]["message"]["content"]
                 if resp.status_code == 429:
                     wait = 5
                     try:
@@ -254,14 +201,14 @@ class HybridInferenceEngine:
         self.openrouter = OpenRouterClient()
         self.active_backend = None
 
-        # OpenRouter-first: prevents Ollama from blocking SSH by consuming 100% CPU.
-        # Ollama is reserved for generate_fast() only (smollm2:135m — fast eval responses).
-        if self.openrouter.is_available():
-            self.active_backend = "openrouter"
-            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (SSH-safe)")
-        elif self.ollama.is_available():
+        # Prefer local inference (genuine autonomy) when a model is available;
+        # fall back to OpenRouter only when no local model is ready
+        if self.ollama.is_available():
             self.active_backend = "ollama"
-            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend (no cloud API key)")
+            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend — local-first")
+        elif self.openrouter.is_available():
+            self.active_backend = "openrouter"
+            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (no local model)")
         else:
             logger.warning("✗ No inference backend available!")
             logger.warning("  Set OPENROUTER_API_KEY for cloud mode or install Ollama for local")
@@ -323,28 +270,13 @@ class HybridInferenceEngine:
                 return resp
         return self.generate(prompt, max_tokens=max_tokens)
 
-    def generate_code(self, prompt: str, max_tokens: int = 300, system: Optional[str] = None) -> Optional[str]:
-        """Use the code-specialized model (qwen3-coder) for code generation tasks.
-        Falls back through FREE_CODE_MODELS only, skipping prose-only models.
-        """
-        if not self.openrouter.is_available():
-            return self.generate(prompt, max_tokens=max_tokens, system=system)
-        or_client = self.openrouter
-        # Try primary code model first
-        resp = or_client.generate(prompt, max_tokens=max_tokens, model=or_client.code_model, system=system)
-        if resp:
-            return resp
-        # Try code-safe fallbacks in order, skipping prose-only models
-        for alt in or_client.FREE_CODE_MODELS:
-            if alt == or_client.code_model or alt in or_client.PROSE_ONLY_MODELS:
-                continue
-            if alt in or_client._rate_limited_models:
-                continue
-            logger.info(f"Code fallback: trying {alt}")
-            resp = or_client.generate(prompt, max_tokens=max_tokens, model=alt, system=system)
+    def generate_code(self, prompt: str, max_tokens: int = 300) -> Optional[str]:
+        """Use the code-specialized model (qwen3-coder) for code generation tasks."""
+        if self.openrouter.is_available():
+            resp = self.openrouter.generate(prompt, max_tokens=max_tokens, model=self.openrouter.code_model)
             if resp:
                 return resp
-        return None
+        return self.generate(prompt, max_tokens=max_tokens)
 
     def get_active_model(self) -> str:
         """Get name of currently active model"""

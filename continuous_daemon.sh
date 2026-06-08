@@ -18,7 +18,25 @@ echo ""
 {
     while true; do
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running iteration..."
-        python3 agent.py 2>&1 | sed 's/^/  /'
+
+        # Watchdog: kill agent.py + Ollama if iteration exceeds 5 minutes
+        PYTHONUNBUFFERED=1 python3 -u agent.py 2>&1 | sed -u 's/^/  /' &
+        AGENT_PID=$!
+        WATCHDOG_MAX=300  # 5 minutes max per iteration
+
+        elapsed_watch=0
+        while kill -0 $AGENT_PID 2>/dev/null && [ $elapsed_watch -lt $WATCHDOG_MAX ]; do
+            sleep 5
+            elapsed_watch=$((elapsed_watch + 5))
+        done
+
+        if kill -0 $AGENT_PID 2>/dev/null; then
+            echo "[$(date +'%Y-%m-%d %H:%M:%S')] WATCHDOG: iteration exceeded ${WATCHDOG_MAX}s — killing agent + Ollama"
+            kill -9 $AGENT_PID 2>/dev/null
+            pkill -9 -f 'ollama runner' 2>/dev/null
+            pkill -f 'ollama serve' 2>/dev/null
+        fi
+        wait $AGENT_PID 2>/dev/null
 
         INTERVAL=$(grep AGENT_ITERATION_INTERVAL .env 2>/dev/null | cut -d= -f2 | tr -d ' ' || echo 600)
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Sleeping ${INTERVAL}s (touch .run_now to skip)..."

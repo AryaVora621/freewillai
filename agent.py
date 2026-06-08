@@ -698,16 +698,6 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             except Exception as e:
                 return f'Error: {e}'
 
-        # /restart -- kill Ollama + restart daemon (emergency SSH recovery)
-        if cmd == "/restart":
-            import subprocess as _sp
-            try:
-                _sp.run(['pkill', '-f', 'ollama'], capture_output=True, timeout=5)
-                _sp.run(['pkill', '-9', '-f', 'python3 agent'], capture_output=True, timeout=5)
-                return "Killed Ollama + agent. Daemon will auto-restart."
-            except Exception as e:
-                return f"Restart error: {e}"
-
         # /git <args> -- run git command in repo
         if text.strip().startswith("/git "):
             git_args = text.strip()[5:].strip().split()
@@ -724,15 +714,35 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             except Exception as e:
                 return f'Error: {e}'
 
+        if cmd in ("/diff",):
+            import subprocess as _sp
+            try:
+                result = _sp.run(
+                    ['git', 'diff', '--stat', 'HEAD~3..HEAD'],
+                    capture_output=True, text=True, timeout=10, cwd=self.repo_path
+                )
+                out = (result.stdout or '').strip()
+                log = _sp.run(
+                    ['git', 'log', '--oneline', '-5'],
+                    capture_output=True, text=True, timeout=5, cwd=self.repo_path
+                ).stdout.strip()
+                return f"Last 5 commits:\n{log}\n\nDiff stat (HEAD~3..HEAD):\n{out[:600]}"
+            except Exception as e:
+                return f"diff error: {e}"
+
         if cmd in ("/help",):
             return (
                 "/status -- iteration count and active goal" + chr(10) +
+                "/health -- CPU/RAM/disk/uptime" + chr(10) +
+                "/history -- last 5 iterations from stats" + chr(10) +
+                "/diff -- last 5 commits + diff stat" + chr(10) +
                 "/goal -- list recent goals" + chr(10) +
                 "/models -- active model config" + chr(10) +
                 "/memory -- show KV memory" + chr(10) +
                 "/log -- recent daemon log" + chr(10) +
                 "/think -- generate a thought" + chr(10) +
                 "/run -- trigger an immediate iteration" + chr(10) +
+                "/restart -- kill Ollama + restart daemon" + chr(10) +
                 "/shell <cmd> -- run shell command on Pi" + chr(10) +
                 "/py <code> -- run Python code on Pi" + chr(10) +
                 "/git <args> -- git command in repo" + chr(10) +

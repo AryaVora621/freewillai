@@ -54,36 +54,38 @@ class GitController:
     def __init__(self, repo_path: str = "."):
         self.repo_path = repo_path
 
-    def run_git(self, *args) -> str:
-        """Execute git command"""
-        result = subprocess.run(
+    def run_git(self, *args):
+        """Execute git command, return CompletedProcess."""
+        return subprocess.run(
             ["git", "-C", self.repo_path] + list(args),
-            capture_output=True,
-            text=True
+            capture_output=True, text=True
         )
-        return result.stdout + result.stderr
 
     def commit(self, message: str) -> bool:
-        """Commit changes with agent signature"""
+        """Commit changes with agent signature. Returns True if commit was created."""
         self.run_git("add", "-A")
         signed_msg = message + chr(10) + chr(10) + "[freeWill autonomous commit]"
         result = self.run_git("commit", "-m", signed_msg)
-        return result.returncode == 0 if hasattr(result, 'returncode') else True
+        # "nothing to commit" is a non-error no-op (returncode 1 from git)
+        if result.returncode != 0 and "nothing to commit" not in result.stdout:
+            logger.warning(f"git commit failed: {result.stderr.strip()[:80]}")
+            return False
+        return True
 
     def push(self, branch: str = "main") -> bool:
         """Push to origin. Uses GITHUB_TOKEN env var if set to authenticate."""
         token = os.getenv("GITHUB_TOKEN")
         if token:
-            # Inject token into remote URL for this push
-            remote_url = self.run_git("remote", "get-url", "origin").strip()
+            remote_result = self.run_git("remote", "get-url", "origin")
+            remote_url = remote_result.stdout.strip()
             if remote_url.startswith("https://github.com/"):
                 authed = remote_url.replace("https://github.com/", f"https://{token}@github.com/")
                 self.run_git("remote", "set-url", "origin", authed)
                 result = self.run_git("push", "origin", branch)
-                self.run_git("remote", "set-url", "origin", remote_url)  # restore clean URL
-                return "error" not in result.lower()
+                self.run_git("remote", "set-url", "origin", remote_url)
+                return result.returncode == 0
         result = self.run_git("push", "origin", branch)
-        return "error" not in result.lower()
+        return result.returncode == 0
 
 
 class AutonomousAgent:

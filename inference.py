@@ -133,6 +133,10 @@ class OpenRouterClient:
         self._response_cache: dict = {}
         self._cache_order: list = []
         self._cache_max = 10
+        # Rate limiter: track call timestamps to proactively space requests
+        # OpenRouter free tier: ~10 req/min per model; stay under with 6s min gap
+        self._call_times: list = []
+        self._min_gap_s = float(os.getenv("OPENROUTER_MIN_GAP_S", "4"))
 
     def _cache_key(self, prompt: str, model: str) -> str:
         import hashlib
@@ -150,6 +154,15 @@ class OpenRouterClient:
         if cache_key in self._response_cache:
             logger.debug("OpenRouter cache hit")
             return self._response_cache[cache_key]
+
+        # Proactive rate limiter: ensure min gap between calls
+        now = time.time()
+        self._call_times = [t for t in self._call_times if now - t < 60]
+        if self._call_times and (now - self._call_times[-1]) < self._min_gap_s:
+            wait = self._min_gap_s - (now - self._call_times[-1])
+            logger.debug(f"Rate limiter: sleeping {wait:.1f}s")
+            time.sleep(wait)
+        self._call_times.append(time.time())
 
         try:
             headers = {

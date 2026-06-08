@@ -1176,6 +1176,92 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
             push_ok = self.git.push()
             logger.info(f"GitHub push: {'ok' if push_ok else 'failed'}")
 
+    def run_iteration_v2(self):
+        """OpenClaw-style iteration: focused THINK→IMPLEMENT→TEST→COMMIT.
+        Uses max 4 inference calls vs the original 8-10. One goal per iteration.
+        """
+        import time as _time
+        iteration_num = self.state['iterations'] + 1
+        logger.info(f"=== Iteration {iteration_num} (v2) ===")
+        start_ts = _time.time()
+
+        # --- THINK (1 call) ---
+        context_lines = [
+            f"Iteration: {iteration_num}",
+            f"Recent decisions: {'; '.join(d['decision'][:60] for d in self.state.get('decisions', [])[-3:])}",
+            f"Last test: {self.state.get('last_test_result', 'none')}",
+            f"Active goal: {self.state.get('active_goal_desc', 'none')}",
+        ]
+        decision = self.think("\\n".join(context_lines))
+        logger.info(f"Decision: {decision[:120]}")
+
+        # Safety gate
+        evaluation = self.evaluate_decision(decision)
+        if evaluation.get('safety', 5) < 3 or evaluation.get('ethics', 5) < 3:
+            logger.warning("Decision rejected (unsafe)")
+            self.state['iterations'] += 1
+            self.save_state()
+            return
+
+        # --- IMPLEMENT (1 call via work_on_goal or apply_code_improvement) ---
+        goal = self.review_goals()
+        result = None
+        if goal:
+            self.state['active_goal_desc'] = goal.get('description', '')[:80]
+            result = self.work_on_goal(goal)
+            if result:
+                logger.info(f"Goal #{goal['id']} result: {result[:80]}")
+
+        # --- TEST (lightweight: syntax check + import) ---
+        test_status = "SKIPPED"
+        improvements_dir = Path(self.repo_path) / "improvements"
+        code_file = str(improvements_dir / f"iter_{iteration_num:03d}.py")
+        if Path(code_file).exists():
+            test_status = self.test_code_improvement(code_file)
+            self.state['last_test_result'] = test_status[:60]
+            logger.info(f"Test: {test_status}")
+
+        # --- SELF-MODIFY every 5th iteration (1 call) ---
+        if iteration_num % 5 == 0:
+            mod = self.self_modify()
+            if mod:
+                logger.info(f"Self-mod: {mod}")
+
+        # --- COMMIT ---
+        elapsed = _time.time() - start_ts
+        self.state['iterations'] += 1
+        self.state['last_run'] = datetime.now().isoformat()
+        self.state['decisions'].append({
+            'iteration': self.state['iterations'],
+            'decision': decision[:200],
+            'timestamp': datetime.now().isoformat(),
+        })
+        self.state['decisions'] = self.state['decisions'][-10:]
+        self.save_state()
+        self.learning.save_state()
+
+        msg = (f"Iteration {self.state['iterations']} v2: "
+               f"test={test_status[:20]}, elapsed={elapsed:.0f}s, "
+               f"goal={'ok' if result else 'none'}")
+        self.git.commit(msg)
+        if os.getenv("GITHUB_TOKEN"):
+            self.git.push()
+
+        # Telegram summary (single message, no Discord)
+        summary = (
+            f"Iter {self.state['iterations']} | {elapsed:.0f}s\n"
+            f"Decision: {decision[:100]}\n"
+            f"Test: {test_status[:40]}\n"
+            f"Backend: {self.inference.active_backend}"
+        )
+        self.telegram.send_message_sync(summary)
+        logger.info(f"v2 iteration done in {elapsed:.1f}s")
+
+
 if __name__ == "__main__":
     agent = AutonomousAgent()
-    agent.run_iteration()
+    # Use v2 (focused, 4 inference calls max) if AGENT_V2=1 is set
+    if os.getenv("AGENT_V2", "0") == "1":
+        agent.run_iteration_v2()
+    else:
+        agent.run_iteration()

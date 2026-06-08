@@ -132,6 +132,14 @@ class AutonomousAgent:
         with open(self.state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
 
+    # Hardware context injected into all prompts — prevents GPU/Docker/CUDA suggestions
+    HARDWARE_CONTEXT = (
+        'HARDWARE: Raspberry Pi 4 (4-core ARM Cortex-A72, 4GB RAM, SD card storage, NO GPU).' + chr(10) +
+        'INFERENCE: Primary=OpenRouter cloud API (fast, free tier). Local=smollm2:135m via Ollama (eval only).' + chr(10) +
+        'CONSTRAINTS: No CUDA, no Docker, no vLLM, no GPU libraries. Python 3.11, ARM Linux.' + chr(10) +
+        'GOAL: Be a self-improving autonomous agent. Improve your own code, add capabilities, fix bugs.'
+    )
+
     def think(self, goal: str) -> str:
         """Generate a concrete, single-step code modification suggestion."""
         import os as _os
@@ -139,18 +147,26 @@ class AutonomousAgent:
 
         try:
             py_files = [f for f in _os.listdir(self.repo_path) if f.endswith('.py')][:5]
-            files_list = chr(10).join(py_files)
+            files_list = ', '.join(py_files)
         except Exception:
             files_list = 'agent.py inference.py tools.py'
 
-        recent_test = self.state.get('last_test_result', 'none')[:100]
+        recent_test = self.state.get('last_test_result', 'none')[:80]
+        iteration = self.state.get('iterations', 0)
+        recent_decisions = '; '.join(
+            d['decision'][:50] for d in self.state.get('decisions', [])[-2:]
+        )
 
         prompt = (
-            'You are a code improvement agent.' + chr(10) +
+            self.HARDWARE_CONTEXT + chr(10) + chr(10) +
+            'You are a code improvement agent for this repo.' + chr(10) +
             'Repo files: ' + files_list + chr(10) +
-            'Goal: ' + goal[:80] + chr(10) +
-            'Last test: ' + recent_test + chr(10) +
-            'Respond with JSON only: {"file":"filename.py","change":"what to change","rationale":"why"}' + chr(10) +
+            f'Iteration: {iteration}' + chr(10) +
+            'Recent decisions: ' + (recent_decisions or 'none') + chr(10) +
+            'Current goal: ' + goal[:100] + chr(10) +
+            'Last test: ' + recent_test + chr(10) + chr(10) +
+            'Suggest ONE concrete, Pi-compatible code change. Respond with JSON only:' + chr(10) +
+            '{"file":"filename.py","change":"specific what to change","rationale":"why this helps"}' + chr(10) +
             'JSON:'
         )
 
@@ -493,23 +509,25 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         is_code_goal = any(w in goal['description'].lower()
                           for w in ['implement', 'write', 'create', 'build', 'code', 'python', 'module', 'function'])
 
+        hw = self.HARDWARE_CONTEXT
         if is_code_goal:
-            prompt = f"""You are {self.personality.name}, writing Python code for your goal.
-Goal: {goal['description']}
-
-Progress: {history}
-
-Write WORKING Python code (no markdown, no triple backticks, raw Python only).
-Start with: # Goal: then a function or class definition.
-Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
+            prompt = (
+                hw + chr(10) + chr(10) +
+                f'You are {self.personality.name}, writing Python code for your goal.' + chr(10) +
+                'Goal: ' + goal['description'][:150] + chr(10) +
+                'Progress: ' + history + chr(10) + chr(10) +
+                'Write WORKING Python code (no markdown, no backticks, raw Python only).' + chr(10) +
+                'Start with: # Goal: then a function or class definition.' + chr(10) +
+                'Under 25 lines. Must work on Pi 4 (ARM, no GPU, no Docker).' + chr(10) +
+                'End with: # STATUS: continue OR # STATUS: complete'
+            )
         else:
             prompt = (
-                'You are a Python developer working on a Raspberry Pi project.' + chr(10) +
+                hw + chr(10) + chr(10) +
                 'Task: ' + goal['description'][:150] + chr(10) +
                 'Progress so far:' + chr(10) + history + chr(10) + chr(10) +
-                'Write the next concrete step: technical analysis, code sketch, or a specific action.' + chr(10) +
-                'Be direct and specific. Under 150 words.' + chr(10) +
-                'End your response with either STATUS: continue or STATUS: complete' + chr(10) +
+                'Write the next concrete Pi-compatible step. Under 100 words. Be specific.' + chr(10) +
+                'End with: STATUS: continue OR STATUS: complete' + chr(10) +
                 'Response:'
             )
         output = self.inference.generate(prompt, max_tokens=300)

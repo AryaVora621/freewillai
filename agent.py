@@ -542,12 +542,17 @@ print("OK: {len(func_names)} function(s) defined and callable")
             "Write function generate_test_case(func_code) that produces a minimal assert-based test for a given function definition",
             "Add /diff Telegram command showing git diff --stat HEAD~3..HEAD to summarize last 3 commits of changes",
         ]
-        # Skip any category already completed
-        completed_descs = {g["description"] for g in self.state["goals"]
-                           if g.get("status") == "completed"}
-        remaining = [c for c in goal_categories if c not in completed_descs]
+        # Skip categories already completed or deferred (≥3 consecutive code-gen failures)
+        skip_descs = {g["description"] for g in self.state["goals"]
+                      if g.get("status") in ("completed", "deferred")}
+        remaining = [c for c in goal_categories if c not in skip_descs]
         if not remaining:
-            remaining = goal_categories  # all done — cycle again
+            # Re-open deferred goals on second pass (maybe models are available now)
+            for g in self.state["goals"]:
+                if g.get("status") == "deferred":
+                    g["status"] = "active"
+                    g["fail_count"] = 0
+            remaining = goal_categories
 
         # Data-driven selection: prefer categories that produced passing tests historically.
         # Falls back to simple cycling if no stats exist yet.
@@ -1363,11 +1368,18 @@ print("OK: {len(func_names)} function(s) defined and callable")
                 if candidate.exists():
                     code_file = str(candidate)
                     result = code
+                    goal["fail_count"] = 0  # reset on successful generation
                     # Update goal progress log so it doesn't go stale
                     goal["progress_log"].append(f"Generated code: {candidate.name}")
                     goal["progress_log"] = goal["progress_log"][-5:]
                     logger.info(f"IMPLEMENT: wrote {candidate.name}")
                 else:
+                    # Code generation failed (prose rejected or API error)
+                    goal["fail_count"] = goal.get("fail_count", 0) + 1
+                    logger.warning(f"Code gen failed for goal #{goal['id']} (fail_count={goal['fail_count']})")
+                    if goal["fail_count"] >= 3:
+                        goal["status"] = "deferred"
+                        logger.warning(f"Goal #{goal['id']} deferred after {goal['fail_count']} failures")
                     result = code
             else:
                 result = self.work_on_goal(goal)

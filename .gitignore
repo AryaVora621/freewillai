@@ -16,3 +16,5 @@ dist/
 .agent.pid
 .daemon.pid
 *.bak
+ignore.md
+*.bak_*

@@ -1410,14 +1410,15 @@ print("OK: {len(func_names)} function(s) defined and callable")
             f.write(_json.dumps(row) + "\n")
 
     def _integrate_improvement(self, code_file: str):
-        """Inject a tested improvement function into agent.py as a new method.
-        Only runs if the function name doesn't already exist in the target file.
+        """Inject a tested improvement function into agent.py at module level
+        (below the AutonomousAgent class, as a standalone utility).
+        Only runs if the function name doesn't already exist in the file.
         Safe: validates full-file syntax before writing; skips on any error.
         """
         import ast as _ast, re as _re, shutil as _sh
         try:
             code = Path(code_file).read_text()
-            # Find the first def in the improvement file
+            # Find the first top-level def (module-level function)
             m = _re.search(r'^def (\w+)\(', code, _re.MULTILINE)
             if not m:
                 return
@@ -1426,17 +1427,25 @@ print("OK: {len(func_names)} function(s) defined and callable")
             target = Path(self.repo_path) / "agent.py"
             agent_src = target.read_text()
 
-            # Skip if this function already exists in agent.py
+            # Skip if this function name already exists anywhere in agent.py
             if f"def {func_name}(" in agent_src:
                 logger.info(f"INTEGRATE: {func_name}() already exists — skipping")
                 return
 
-            # Indent function to class method level (4 spaces per line)
+            # Extract only the function lines (strip comment header)
             func_lines = code.splitlines()
-            # Strip comment header lines at top
             code_start = next((i for i, l in enumerate(func_lines) if l.startswith("def ")), 0)
-            indented = "\n".join("    " + l if l.strip() else "" for l in func_lines[code_start:])
-            new_src = agent_src.rstrip() + "\n\n" + indented + "\n"
+            func_code = "\n".join(func_lines[code_start:]).strip()
+
+            # Append at module level (after startup_check, before __main__)
+            insert_marker = '\nif __name__ == "__main__":'
+            if insert_marker in agent_src:
+                new_src = agent_src.replace(
+                    insert_marker,
+                    f"\n\n{func_code}\n{insert_marker}"
+                )
+            else:
+                new_src = agent_src.rstrip() + f"\n\n{func_code}\n"
 
             # Validate before writing
             try:
@@ -1447,8 +1456,8 @@ print("OK: {len(func_names)} function(s) defined and callable")
 
             _sh.copy2(str(target), str(target) + ".bak_integrate")
             target.write_text(new_src)
-            logger.info(f"INTEGRATE: injected {func_name}() into agent.py")
-            self.git.commit(f"integrate: inject {func_name}() from improvements/ into agent.py")
+            logger.info(f"INTEGRATE: injected {func_name}() into agent.py at module level")
+            self.git.commit(f"integrate: add {func_name}() utility to agent.py")
         except Exception as e:
             logger.warning(f"INTEGRATE: error — {e}")
 

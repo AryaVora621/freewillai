@@ -1646,6 +1646,20 @@ def generate_test_case(func_code):
         else:
             sample_vals.append(gen_val(d))
 
+
+def monitor_openrouter_quota(api_key):
+    """Check OpenRouter credit quota and log warning if low."""
+    import json, logging, urllib.request, urllib.error
+    url = f"https://openrouter.ai/api/v1/auth/key?key={api_key}"
+    try:
+        with urllib.request.urlopen(url) as resp:
+            data = json.load(resp)
+        remaining = data.get("credits", {}).get("remaining", 0)
+        if remaining < 10:
+            logging.warning("OpenRouter quota low: %s credits left", remaining)
+    except urllib.error.URLError as e:
+        logging.error("Failed to fetch OpenRouter quota: %s", e)
+
 if __name__ == "__main__":
     agent = AutonomousAgent()
 

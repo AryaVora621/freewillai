@@ -840,10 +840,28 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         except Exception as e:
             return "Read error: " + str(e)
 
+        # Extract the target function name from change_desc if it contains func_name()
+        import re as _re2
+        target_func = None
+        m = _re2.search(r'\b(\w+)\(\)', change_desc)
+        if m:
+            target_func = m.group(1)
+
+        # Read existing function to include as context for the LLM
+        existing_func = ""
+        if target_func:
+            func_m = _re2.search(
+                r'(    def ' + target_func + r'\(.*?)(?=\n    def |\Z)',
+                original, _re2.DOTALL
+            )
+            if func_m:
+                existing_func = func_m.group(1)[:600]
+
         prompt = (
-            'Write ONE improved Python utility function for a Raspberry Pi AI agent.' + chr(10) +
-            'Improvement needed: ' + change_desc[:200] + chr(10) +
-            'Rules: return ONLY the function (def ...). No markdown. No extra imports. Under 25 lines.' + chr(10) +
+            'Improve this Python method for a Raspberry Pi AI agent (ARM, no GPU).' + chr(10) +
+            'Improvement goal: ' + change_desc[:200] + chr(10) +
+            (('Current code:\n' + existing_func + chr(10)) if existing_func else '') +
+            'Rules: return ONLY the complete improved function (def ...). No markdown. Under 30 lines.' + chr(10) +
             'def '
         )
         try:
@@ -937,51 +955,26 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
 
     def self_modify(self) -> Optional[str]:
-        """Attempt to improve own code: generate patch, test, apply if passes."""
-        try:
-            with open(__file__, "r") as f:
-                src = f.read()
-        except Exception:
+        """Improve own code every 5th iteration using self_edit_file().
+        Rotates through high-impact methods so each self-mod targets something different.
+        """
+        # Rotate targets so the agent doesn't just keep rewriting think()
+        targets = [
+            ("agent.py", "improve the think() method: better JSON parsing, more context-aware decisions"),
+            ("agent.py", "improve apply_code_improvement(): better prompt, strip markdown more robustly"),
+            ("inference.py", "improve OpenRouterClient.generate(): better error handling, smarter retry"),
+            ("agent.py", "improve _append_iteration_stats(): also record inference_calls count"),
+            ("agent.py", "improve test_code_improvement(): add more robust sandbox, detect infinite loops"),
+        ]
+        iteration = self.state.get('iterations', 0)
+        file_name, change_desc = targets[iteration % len(targets)]
+
+        logger.info(f"self_modify: targeting {file_name} — {change_desc[:60]}")
+        result = self.self_edit_file(file_name, change_desc)
+        if result and result.startswith("Reverted"):
+            logger.warning(f"self_modify reverted: {result}")
             return None
-
-        # Focus on the autonomous_action and think methods (most impactful)
-        snippet = src[src.find("def think("):src.find("def seek_improvements(")]
-        prompt = (
-            'Improve this Python method (max 30 lines).' + chr(10) +
-            'Current code:' + chr(10) + snippet[:400] + chr(10) +
-            'Return ONLY the complete improved method. No markdown. No explanation.' + chr(10) +
-            'Start with: def think(self, goal: str) -> str:' + chr(10) +
-            'def think(self, goal: str) -> str:'
-        )
-        new_code = self.inference.generate_code(prompt, max_tokens=500)
-        if new_code and not new_code.startswith('def '):
-            new_code = 'def think(self, goal: str) -> str:' + chr(10) + new_code
-        if not new_code or "def think" not in new_code:
-            return None
-
-        # Strip fences
-        new_code = new_code.strip()
-        if new_code.startswith("```"):
-            lines = new_code.splitlines()
-            new_code = chr(10).join(l for l in lines if not l.strip().startswith("```")).strip()
-
-        # Validate it's syntactically valid Python
-        import ast as _ast
-        try:
-            _ast.parse(new_code)
-        except SyntaxError as e:
-            logger.warning(f"self_modify: generated code has syntax error: {e}")
-            return None
-
-        # Write to a staging file for inspection (not applied directly)
-        staging = Path(self.repo_path) / "improvements" / f"self_mod_{self.state['iterations']:03d}.py"
-        staging.parent.mkdir(exist_ok=True)
-        staging.write_text(
-            f"# Self-modification proposal — Iteration {self.state['iterations']}\n"
-            f"# Source: self_modify() in agent.py\n\n{new_code}\n"
-        )
-        logger.info(f"Self-modification staged: {staging.name}")
-        return f"Staged self-mod proposal: {staging.name}"
+        return result
 
     def start_telegram_listener(self):
         """Background thread: poll Telegram every 5 seconds and respond immediately."""

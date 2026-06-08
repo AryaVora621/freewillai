@@ -455,6 +455,44 @@ print("OK: {len(func_names)} function(s) defined and callable")
             logger.warning(f"Web search failed: {e}")
             return None
 
+    def _pick_best_goal(self, candidates: list) -> str:
+        """Pick the candidate goal with the best historical test-pass rate.
+        Reads memory/iteration_stats.jsonl. Falls back to cycling if no data.
+        """
+        import json as _j
+        stats_path = Path(self.repo_path) / "memory" / "iteration_stats.jsonl"
+        if not stats_path.exists():
+            return candidates[self.state["iterations"] % len(candidates)]
+        try:
+            rows = [_j.loads(l) for l in stats_path.read_text().strip().splitlines() if l.strip()]
+        except Exception:
+            return candidates[self.state["iterations"] % len(candidates)]
+
+        if len(rows) < 4:
+            return candidates[self.state["iterations"] % len(candidates)]
+
+        # Score each candidate by keyword overlap with historically passing goals
+        passing_keywords: dict = {}
+        for row in rows:
+            if row.get("test", "").startswith("PASSED"):
+                for word in row.get("goal", "").lower().split():
+                    if len(word) > 4:
+                        passing_keywords[word] = passing_keywords.get(word, 0) + 1
+
+        if not passing_keywords:
+            return candidates[self.state["iterations"] % len(candidates)]
+
+        def score(desc: str) -> int:
+            return sum(passing_keywords.get(w, 0) for w in desc.lower().split() if len(w) > 4)
+
+        scored = sorted(candidates, key=score, reverse=True)
+        # Pick top candidate, rotating among ties each iteration
+        top_score = score(scored[0])
+        top_group = [c for c in scored if score(c) == top_score]
+        chosen = top_group[self.state["iterations"] % len(top_group)]
+        logger.info(f"Goal picker: chose '{chosen[:60]}...' (score={top_score})")
+        return chosen
+
     def review_goals(self) -> Optional[dict]:
         """Pick up the active self-set goal, or set a new one if there isn't one."""
         active = next((g for g in self.state["goals"] if g["status"] == "active"), None)
@@ -489,7 +527,9 @@ print("OK: {len(func_names)} function(s) defined and callable")
         if not remaining:
             remaining = goal_categories  # all done — cycle again
 
-        goal_desc = remaining[self.state["iterations"] % len(remaining)]
+        # Data-driven selection: prefer categories that produced passing tests historically.
+        # Falls back to simple cycling if no stats exist yet.
+        goal_desc = self._pick_best_goal(remaining)
 
         goal = {
             "id": (max((g["id"] for g in self.state["goals"]), default=0) + 1),

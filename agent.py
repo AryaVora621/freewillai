@@ -1258,8 +1258,53 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         logger.info(f"v2 iteration done in {elapsed:.1f}s")
 
 
+def startup_check(agent: 'AutonomousAgent') -> bool:
+    """Run before first iteration after restart. Verifies inference works,
+    clears stale state, sends a recovery Telegram message."""
+    import time as _time, subprocess as _sp
+
+    logger.info("=== STARTUP CHECK ===")
+
+    # Kill any leftover Ollama runner processes from previous session
+    try:
+        r = _sp.run(['pkill', '-9', '-f', 'ollama runner'], capture_output=True, timeout=3)
+        if r.returncode == 0:
+            logger.info("Killed leftover ollama runner processes")
+    except Exception:
+        pass
+
+    # Test inference is working
+    logger.info(f"Testing inference backend: {agent.inference.active_backend}")
+    test_resp = agent.inference.generate("Reply with one word: ready", max_tokens=5)
+    if not test_resp:
+        logger.error("Inference test FAILED — no response from any backend")
+        agent.telegram.send_message_sync(
+            "Startup failed: inference not working. Check OPENROUTER_API_KEY."
+        )
+        return False
+
+    logger.info(f"Inference OK: {test_resp!r}")
+
+    # Notify Telegram
+    backend = agent.inference.active_backend
+    iteration = agent.state.get('iterations', 0)
+    agent.telegram.send_message_sync(
+        f"freeWillAi restarted OK\n"
+        f"Backend: {backend}\n"
+        f"Resuming from iteration {iteration}\n"
+        f"Inference test: {test_resp!r}"
+    )
+    return True
+
+
 if __name__ == "__main__":
     agent = AutonomousAgent()
+
+    # Run startup check on first boot or after restart (AGENT_STARTUP_CHECK=1)
+    if os.getenv("AGENT_STARTUP_CHECK", "0") == "1":
+        if not startup_check(agent):
+            import sys; sys.exit(1)
+
     # Use v2 (focused, 4 inference calls max) if AGENT_V2=1 is set
     if os.getenv("AGENT_V2", "0") == "1":
         agent.run_iteration_v2()

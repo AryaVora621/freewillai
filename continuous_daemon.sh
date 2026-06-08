@@ -16,11 +16,19 @@ echo "Trigger file: $TRIGGER (touch to run immediately)"
 echo ""
 
 {
+    FIRST_RUN=1
     while true; do
         echo "[$(date +'%Y-%m-%d %H:%M:%S')] Running iteration..."
 
+        # Pass startup check flag on first run only
+        STARTUP_FLAG=""
+        if [ "$FIRST_RUN" = "1" ]; then
+            STARTUP_FLAG="AGENT_STARTUP_CHECK=1"
+            FIRST_RUN=0
+        fi
+
         # Watchdog: kill agent.py + Ollama if iteration exceeds 5 minutes
-        PYTHONUNBUFFERED=1 python3 -u agent.py 2>&1 | sed -u 's/^/  /' &
+        env PYTHONUNBUFFERED=1 AGENT_V2=1 $STARTUP_FLAG python3 -u agent.py 2>&1 | sed -u 's/^/  /' &
         AGENT_PID=$!
         WATCHDOG_MAX=300  # 5 minutes max per iteration
 

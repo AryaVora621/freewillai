@@ -601,6 +601,43 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             except Exception as e:
                 return f"Could not read log: {e}"
 
+        if cmd in ("/health",):
+            try:
+                import subprocess as _sp
+                cpu = open("/proc/loadavg").read().split()[0]
+                mem_info = {k.split()[0]: k.split()[1]
+                            for k in open("/proc/meminfo").read().splitlines()
+                            if k.split()[0] in ("MemTotal:", "MemAvailable:")}
+                total_mb = int(mem_info.get("MemTotal:", "0 kB").split()[0]) // 1024
+                avail_mb = int(mem_info.get("MemAvailable:", "0 kB").split()[0]) // 1024
+                used_pct = round((total_mb - avail_mb) / total_mb * 100) if total_mb else 0
+                disk = _sp.run(["df", "-h", "/"], capture_output=True, text=True).stdout.splitlines()
+                disk_line = disk[1] if len(disk) > 1 else "?"
+                uptime = open("/proc/uptime").read().split()[0]
+                up_h = int(float(uptime)) // 3600
+                return (f"CPU load: {cpu} | RAM: {used_pct}% ({avail_mb}MB free)" +
+                        chr(10) + f"Disk: {disk_line.split()[3]} free ({disk_line.split()[4]})" +
+                        chr(10) + f"Uptime: {up_h}h | Backend: {self.inference.active_backend}")
+            except Exception as e:
+                return f"Health check error: {e}"
+
+        if cmd in ("/restart",):
+            try:
+                import subprocess as _sp, threading as _th
+                def _do_restart():
+                    import time as _t
+                    _t.sleep(1)
+                    _sp.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
+                    _sp.run(["pkill", "-f", "continuous_daemon"], capture_output=True, timeout=5)
+                    _t.sleep(2)
+                    _sp.Popen(["bash", str(Path(self.repo_path) / "continuous_daemon.sh")],
+                              stdout=open("/tmp/daemon_restart.log", "w"),
+                              stderr=_sp.STDOUT, cwd=self.repo_path)
+                _th.Thread(target=_do_restart, daemon=True).start()
+                return "Restarting: killing Ollama + restarting daemon in 3s..."
+            except Exception as e:
+                return f"Restart error: {e}"
+
         if cmd in ("/think",):
             goal = next((g for g in self.state["goals"] if g["status"] == "active"), None)
             thought = self.think(goal["description"] if goal else "improve myself")

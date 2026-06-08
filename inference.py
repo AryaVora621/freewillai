@@ -69,12 +69,20 @@ class OllamaClient:
                 "keep_alive": -1,
                 "options": {"num_predict": max_tokens}
             }
-            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=180)
+            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=20)
             if resp.status_code == 200:
                 return resp.json().get("response", "")
             else:
                 logger.error(f"Ollama error: {resp.status_code}")
                 return None
+        except requests.exceptions.Timeout:
+            logger.warning("Ollama timeout — killing background inference process to reclaim CPU")
+            try:
+                import subprocess as _sp
+                _sp.run(['pkill', '-f', 'ollama runner'], capture_output=True, timeout=2)
+            except Exception:
+                pass
+            return None
         except Exception as e:
             logger.error(f"Ollama connection error: {e}")
             return None
@@ -201,14 +209,14 @@ class HybridInferenceEngine:
         self.openrouter = OpenRouterClient()
         self.active_backend = None
 
-        # Prefer local inference (genuine autonomy) when a model is available;
-        # fall back to OpenRouter only when no local model is ready
-        if self.ollama.is_available():
-            self.active_backend = "ollama"
-            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend — local-first")
-        elif self.openrouter.is_available():
+        # OpenRouter-first: prevents Ollama from blocking SSH by consuming 100% CPU.
+        # Ollama is reserved for generate_fast() only (smollm2:135m — fast eval responses).
+        if self.openrouter.is_available():
             self.active_backend = "openrouter"
-            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (no local model)")
+            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (SSH-safe)")
+        elif self.ollama.is_available():
+            self.active_backend = "ollama"
+            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend (no cloud API key)")
         else:
             logger.warning("✗ No inference backend available!")
             logger.warning("  Set OPENROUTER_API_KEY for cloud mode or install Ollama for local")

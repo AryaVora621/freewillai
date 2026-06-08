@@ -648,6 +648,16 @@ Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
             except Exception as e:
                 return f'Error: {e}'
 
+        # /restart -- kill Ollama + restart daemon (emergency SSH recovery)
+        if cmd == "/restart":
+            import subprocess as _sp
+            try:
+                _sp.run(['pkill', '-f', 'ollama'], capture_output=True, timeout=5)
+                _sp.run(['pkill', '-9', '-f', 'python3 agent'], capture_output=True, timeout=5)
+                return "Killed Ollama + agent. Daemon will auto-restart."
+            except Exception as e:
+                return f"Restart error: {e}"
+
         # /git <args> -- run git command in repo
         if text.strip().startswith("/git "):
             git_args = text.strip()[5:].strip().split()

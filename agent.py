@@ -389,67 +389,88 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
     def test_code_improvement(self, code_file: str) -> str:
         """Run a generated improvement file in a sandboxed subprocess (5 s timeout).
-        Checks that the file executes without error and that every defined function can be called
-        with no arguments. Returns an error message or an empty string on success.
+        Verifies the file imports, executes without error, and that each top‑level
+        function can be called with no arguments. Returns an error message or an empty
+        string on success.
         """
-        import subprocess, re, textwrap, sys, os, resource, signal, json, pathlib
+        import subprocess, pathlib, re, json, os, signal, resource, sys, textwrap, shlex, time
 
-        # Prepare a tiny harness that imports the target module and calls each function
+        # ---- 1️⃣ read source & discover top‑level functions -----------------
         src = pathlib.Path(code_file).read_text()
-        funcs = re.findall(r'^def (\w+)\s*\(', src, re.MULTILINE)
-        calls = "\n".join(f"    {name}()" for name in funcs)
-        harness = textwrap.dedent(f"""
-            import importlib.util, sys, json
-            spec = importlib.util.spec_from_file_location("candidate", r"{code_file}")
+        func_names = re.findall(r'^\s*def\s+([A-Za-z_]\w*)\s*\(', src, re.MULTILINE)
+
+        # ---- 2️⃣ build a tiny harness that imports the module and calls each func ----
+        harness = textwrap.dedent(f'''
+            import importlib.util, sys, json, traceback
+            spec = importlib.util.spec_from_file_location("target_mod", {json.dumps(str(code_file))})
             mod = importlib.util.module_from_spec(spec)
-            sys.modules["candidate"] = mod
+            sys.modules["target_mod"] = mod
             try:
                 spec.loader.exec_module(mod)
-            except Exception as e:
-                print(json.dumps({{"error": "import", "msg": str(e)}}))
+            except Exception:
+                print(json.dumps({{"error":"import_failed","trace":traceback.format_exc()}}))
                 sys.exit(1)
-            try:
-    {calls if calls else "    pass"}
-            except Exception as e:
-                print(json.dumps({{"error": "call", "msg": str(e)}}))
-                sys.exit(1)
-            print(json.dumps({{"error": None}}))
-        """)
 
-        # Write harness to a temporary file
-        harness_path = pathlib.Path("/tmp/harness_{}.py".format(os.getpid()))
+            results = {{}}
+            for name in {json.dumps(func_names)}:
+                try:
+                    getattr(mod, name)()
+                    results[name] = "ok"
+                except Exception as e:
+                    results[name] = f"error: {{e}}"
+            print(json.dumps(results))
+        ''')
+
+        # ---- 3️⃣ write harness to a temporary file -----------------
+        harness_path = pathlib.Path("/tmp/harness_") .with_name(f"harness_{int(time.time()*1000)}.py")
         harness_path.write_text(harness)
 
-        # Function to limit resources (CPU time, memory)
-        def limit():
-            resource.setrlimit(resource.RLIMIT_CPU, (5, 5))          # 5 s CPU time
-            resource.setrlimit(resource.RLIMIT_AS, (100*1024**2, 100*1024**2))  # 100 MiB RAM
+        # ---- 4️⃣ sandbox limits (CPU time, memory, no file creation) ----------
+        def preexec():
+            # limit CPU time to 4 s (real time watchdog will enforce 5 s)
+            resource.setrlimit(resource.RLIMIT_CPU, (4, 4))
+            # limit address space to 64 MiB
+            resource.setrlimit(resource.RLIMIT_AS, (64*1024*1024, 64*1024*1024))
+            # drop privileges if possible
+            try:
+                os.setuid(os.getuid())
+            except Exception:
+                pass
 
-        # Run the harness
+        # ---- 5️⃣ run harness with timeout and capture output -----------------
         try:
             proc = subprocess.run(
                 [sys.executable, str(harness_path)],
-                preexec_fn=limit,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=5,
+                preexec_fn=preexec,
+                check=False,
                 text=True,
             )
         except subprocess.TimeoutExpired:
-            return "Error: execution timed out (possible infinite loop)"
+            return "Error: execution timed out (possible infinite loop)."
         finally:
-            if harness_path.exists():
+            try:
                 harness_path.unlink()
+            except Exception:
+                pass
 
-        # Parse JSON output from harness
+        # ---- 6️⃣ interpret harness result ------------------------------------
+        if proc.returncode != 0:
+            try:
+                err = json.loads(proc.stdout.strip())
+                return f"Import error: {err.get('trace','')}"
+            except Exception:
+                return f"Runtime error: {proc.stderr.strip() or proc.stdout.strip()}"
+
         try:
-            out = json.loads(proc.stdout.strip().splitlines()[-1])
-            if out.get("error"):
-                return f"Error during {out['error']} phase: {out['msg']}"
+            outcomes = json.loads(proc.stdout.strip())
         except Exception:
-            return f"Runtime error: {proc.stderr.strip() or proc.stdout.strip()}"
+            return f"Failed to parse harness output: {proc.stdout[:200]}"
 
-        return ""
+        failures = [f"{n}: {msg}" for n, msg in outcomes.items() if not msg == "ok"]
+        return "" if not failures else "Function errors: " + "; ".join(failures)
 
     def web_search(self, query: str) -> Optional[str]:
         """Search the web via DuckDuckGo and fetch top result page text."""

@@ -59,7 +59,7 @@ class Planner:
             (("Context: " + context[:100] + chr(10)) if context else "") +
             chr(10) +
             "Available tools: shell(cmd), web_fetch(url), kv_set(key,value), " +
-            "write_file(path,content), append_memory(note)" + chr(10) +
+            "write_file(path,content - path must be a RELATIVE filename like output.txt), append_memory(note)" + chr(10) + "IMPORTANT: write_file paths must be relative filenames, never absolute paths like /home/*" + chr(10) +
             "Output a JSON array of 2-3 steps:" + chr(10) +
             '[{"tool":"shell","args":{"cmd":"ls"},"expected":"file list"},' +
             '{"tool":"kv_set","args":{"key":"result","value":"done"},"expected":"stored"}]' + chr(10) +

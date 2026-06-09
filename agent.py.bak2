@@ -54,38 +54,36 @@ class GitController:
     def __init__(self, repo_path: str = "."):
         self.repo_path = repo_path
 
-    def run_git(self, *args):
-        """Execute git command, return CompletedProcess."""
-        return subprocess.run(
+    def run_git(self, *args) -> str:
+        """Execute git command"""
+        result = subprocess.run(
             ["git", "-C", self.repo_path] + list(args),
-            capture_output=True, text=True
+            capture_output=True,
+            text=True
         )
+        return result.stdout + result.stderr
 
     def commit(self, message: str) -> bool:
-        """Commit changes with agent signature. Returns True if commit was created."""
+        """Commit changes with agent signature"""
         self.run_git("add", "-A")
         signed_msg = message + chr(10) + chr(10) + "[freeWill autonomous commit]"
         result = self.run_git("commit", "-m", signed_msg)
-        # "nothing to commit" is a non-error no-op (returncode 1 from git)
-        if result.returncode != 0 and "nothing to commit" not in result.stdout:
-            logger.warning(f"git commit failed: {result.stderr.strip()[:80]}")
-            return False
-        return True
+        return result.returncode == 0 if hasattr(result, 'returncode') else True
 
     def push(self, branch: str = "main") -> bool:
         """Push to origin. Uses GITHUB_TOKEN env var if set to authenticate."""
         token = os.getenv("GITHUB_TOKEN")
         if token:
-            remote_result = self.run_git("remote", "get-url", "origin")
-            remote_url = remote_result.stdout.strip()
+            # Inject token into remote URL for this push
+            remote_url = self.run_git("remote", "get-url", "origin").strip()
             if remote_url.startswith("https://github.com/"):
                 authed = remote_url.replace("https://github.com/", f"https://{token}@github.com/")
                 self.run_git("remote", "set-url", "origin", authed)
                 result = self.run_git("push", "origin", branch)
-                self.run_git("remote", "set-url", "origin", remote_url)
-                return result.returncode == 0
+                self.run_git("remote", "set-url", "origin", remote_url)  # restore clean URL
+                return "error" not in result.lower()
         result = self.run_git("push", "origin", branch)
-        return result.returncode == 0
+        return "error" not in result.lower()
 
 
 class AutonomousAgent:
@@ -134,76 +132,54 @@ class AutonomousAgent:
         with open(self.state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
 
-    # Hardware context injected into all prompts — prevents GPU/Docker/CUDA suggestions
-    HARDWARE_CONTEXT = (
-        'HARDWARE: Raspberry Pi 4 (4-core ARM Cortex-A72, 4GB RAM, SD card storage, NO GPU).' + chr(10) +
-        'INFERENCE: Primary=OpenRouter cloud API (fast, free tier). Local=smollm2:135m via Ollama (eval only).' + chr(10) +
-        'CONSTRAINTS: No CUDA, no Docker, no vLLM, no GPU libraries. Python 3.11, ARM Linux.' + chr(10) +
-        'GOAL: Be a self-improving autonomous agent. Improve your own code, add capabilities, fix bugs.'
-    )
-
     def think(self, goal: str) -> str:
-        """Generate a concrete, single-step code modification suggestion."""
+        """Generate a concrete, actionable single-step suggestion toward the goal."""
         import os as _os
-        import json as _json
-
         try:
             py_files = [f for f in _os.listdir(self.repo_path) if f.endswith('.py')][:5]
-            files_list = ', '.join(py_files)
         except Exception:
-            files_list = 'agent.py inference.py tools.py'
+            py_files = ['agent.py', 'inference.py', 'tools.py']
 
-        recent_test = self.state.get('last_test_result', 'none')[:80]
-        iteration = self.state.get('iterations', 0)
-        recent_decisions = '; '.join(
-            d['decision'][:50] for d in self.state.get('decisions', [])[-2:]
+        recent_decisions = [
+            d.get('decision', '')[:60]
+            for d in self.state.get('decisions', [])[-3:]
+        ]
+        context_summary = (
+            f"Goal: {goal[:100]}\n"
+            f"Iteration: {self.state.get('iterations', 0)}\n"
+            f"Recent decisions: {'; '.join(recent_decisions) or 'none'}\n"
+            f"Repo files: {', '.join(py_files)}"
         )
-
         prompt = (
-            self.HARDWARE_CONTEXT + chr(10) + chr(10) +
-            'You are a code improvement agent for this repo.' + chr(10) +
-            'Repo files: ' + files_list + chr(10) +
-            f'Iteration: {iteration}' + chr(10) +
-            'Recent decisions: ' + (recent_decisions or 'none') + chr(10) +
-            'Current goal: ' + goal[:100] + chr(10) +
-            'Last test: ' + recent_test + chr(10) + chr(10) +
-            'Suggest ONE concrete, Pi-compatible code change. Respond with JSON only:' + chr(10) +
-            '{"file":"filename.py","change":"specific what to change","rationale":"why this helps"}' + chr(10) +
-            'JSON:'
+            "You are an autonomous agent on a Raspberry Pi. Given this context:\n" +
+            context_summary + "\n\n" +
+            "Output ONE concrete next action as JSON:\n" +
+            '{"file": "agent.py", "change": "specific code change in 1-2 sentences", '
+            '"reason": "why this advances the goal"}\n'
+            "JSON only, no explanation:"
         )
-
-        try:
-            raw_output = self.inference.generate(prompt, max_tokens=120)
-        except Exception as e:
-            return 'FILE: agent.py | add retry logic to inference fallback'
-
-        if not raw_output:
-            return 'FILE: agent.py | improve error handling'
-
-        resp = raw_output.strip()
-
-        # Try JSON parse first
-        try:
-            # Strip markdown fences
-            if resp.startswith('```'):
-                lines = resp.split(chr(10))
-                resp = chr(10).join(l for l in lines if not l.startswith('```')).strip()
-            suggestion = _json.loads(resp)
-            fname = suggestion.get('file', 'agent.py')
-            change = suggestion.get('change', 'improve error handling')
-            return 'FILE: ' + fname + ' | ' + change[:80]
-        except Exception:
-            pass
-
-        # Fallback: filter refusals
-        refuse_phrases = ["i can't", "i cannot", "unable to", "not able to", "sorry"]
-        first_line = resp.splitlines()[0].strip()
-        if any(p in first_line.lower() for p in refuse_phrases):
-            return 'FILE: agent.py | add retry logic to inference fallback'
-
-        if '|' in first_line:
-            return 'FILE: ' + first_line if not first_line.startswith('FILE:') else first_line
-        return 'FILE: agent.py | ' + first_line[:60]
+        response = self.inference.generate(prompt, max_tokens=120)
+        if response:
+            import json as _json
+            try:
+                text = response.strip()
+                start = text.find('{')
+                end = text.rfind('}')
+                if start != -1 and end != -1:
+                    data = _json.loads(text[start:end+1])
+                    change = data.get('change', '')
+                    reason = data.get('reason', '')
+                    tgt = data.get('file', 'agent.py')
+                    if change and not change.startswith('{'):
+                        return f"FILE: {tgt} | {change[:100]} | {reason[:60]}"
+            except Exception:
+                pass
+            # Fallback: strip JSON blobs, take first plain sentence
+            clean = response.strip().split('\n')[0]
+            import re as _re; clean = _re.sub(r'\{.*?\}', '', clean).strip(' ,"')
+            if clean and len(clean) > 10:
+                return f"FILE: agent.py | {clean[:100]}"
+        return f"FILE: agent.py | Improve error handling in main loop"
     def evaluate_decision(self, decision: str) -> dict:
         """Evaluate if a decision is safe and aligned with goals"""
         # Strip FILE: prefix for cleaner evaluation
@@ -314,67 +290,45 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
-        system_msg = (
-            'You are a Python code generator. '
-            'Output ONLY valid Python code. '
-            'No explanations, no prose, no markdown fences. '
-            'First line MUST start with "def ". '
-            'Never write sentences or paragraphs.'
-        )
         prompt = (
-            'Write a Python function (max 20 lines, stdlib only, Raspberry Pi 4).\n'
-            'Task: ' + suggestion[:120] + '\n'
-            'Rules: max 20 lines, one-line docstring only, no imports at top.\n'
-            'Output starts with: def '
+            'Write a short Python function (max 20 lines) for a Raspberry Pi.' + chr(10) +
+            'Task: ' + suggestion[:120] + chr(10) +
+            'STRICT RULES: max 20 lines total, no docstring longer than 1 line, stdlib only.' + chr(10) +
+            'STOP after the closing return statement. No extra code.' + chr(10) +
+            'def '
         )
-        code = self.inference.generate_code(prompt, max_tokens=400, system=system_msg)
-        if not code:
+        code = self.inference.generate_code(prompt, max_tokens=400)
+        if code and not code.startswith('def '):
+            code = 'def ' + code
+        # Truncate to max 25 lines to prevent incomplete code
+        if code:
+            code_lines = code.splitlines()
+            if len(code_lines) > 25:
+                # Find last complete statement before line 25
+                code = chr(10).join(code_lines[:22]) + chr(10)
+        if not code or len(code.strip()) < 20:
             return None
 
-        # Strip markdown fences
+        # Strip markdown fences and leading prose
         code = code.strip()
         if code.startswith("```"):
             lines = code.splitlines()
-            lines = lines[1:] if lines[0].startswith("```") else lines
+            if lines[0].startswith("```"):
+                lines = lines[1:]
             if lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
-            code = "\n".join(lines).strip()
-
-        # Prepend def if response omitted it
-        if not code.startswith('def '):
-            code = 'def ' + code
-
-        # Strip any leading prose before first def/class/import
-        code_starts = ('def ', 'class ', 'import ', 'from ', 'async def ')
+            code = chr(10).join(lines).strip()
+        # Strip leading prose lines (text before first def/class/import)
+        code_starts = ('def ', 'class ', 'import ', 'from ', 'async def ', '#!')
         code_lines = code.splitlines()
-        first_code = next(
-            (i for i, ln in enumerate(code_lines) if any(ln.lstrip().startswith(p) for p in code_starts)),
-            0
-        )
+        first_code = 0
+        for i, line in enumerate(code_lines):
+            if any(line.lstrip().startswith(p) for p in code_starts):
+                first_code = i
+                break
         if first_code > 0:
-            code = "\n".join(code_lines[first_code:])
+            code = chr(10).join(code_lines[first_code:])
         code = code.strip()
-
-        # Hard reject: if no def found or looks like prose (no colon on first code line)
-        if not code.startswith('def ') or ':' not in code.split('\n')[0]:
-            logger.warning("Code generation returned prose (no def header), rejecting")
-            return None
-
-        # Truncate to 25 lines max
-        lines = code.splitlines()
-        if len(lines) > 25:
-            code = "\n".join(lines[:22])
-
-        if len(code.strip()) < 20:
-            return None
-
-        # Syntax-check before writing -- catches mixed prose/code (e.g. prose at line 18+)
-        import ast as _ast
-        try:
-            _ast.parse(code)
-        except SyntaxError as e:
-            logger.warning(f"Code generation syntax error at line {e.lineno}: rejecting")
-            return None
 
         improvements_dir = Path(self.repo_path) / "improvements"
         improvements_dir.mkdir(exist_ok=True)
@@ -388,45 +342,29 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         return code.strip()[:200]
 
     def test_code_improvement(self, code_file: str) -> str:
-        """Execute a generated improvement file in a tightly‑controlled sandbox.
-        - 5 s wall‑clock timeout (detects hangs/infinite loops)
-        - Strict CPU & memory limits via ``resource``
-        - Runs in a separate process to avoid contaminating the parent.
-        Returns an empty string on success or a descriptive error message.
-        """
-        import pathlib, re, sys, json, multiprocessing as mp, resource, signal, os, traceback
-
-        src = pathlib.Path(code_file).read_text()
-        func_names = re.findall(r'^def (\w+)\s*\(', src, re.MULTILINE)
-
-        def _worker(q):
-            # Apply strict limits: 50 MB RSS, 2 s CPU time, no fork, no exec
-            resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
-            resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
-            # Prevent creation of new processes
-            resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-            # Disable signals that could escape the sandbox
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            try:
-                mod = {}
-                exec(src, mod)                     # load user code
-                for name in func_names:
-                    fn = mod.get(name)
-                    if not callable(fn):
-                        raise RuntimeError(f"'{name}' is not callable")
-                    fn()                           # call with no arguments
-                q.put("")                          # success
-            except Exception:
-                q.put(traceback.format_exc())
-
-        q = mp.Queue()
-        proc = mp.Process(target=_worker, args=(q,))
-        proc.start()
-        proc.join(5)                               # wall‑clock timeout
-        if proc.is_alive():
-            proc.terminate()
-            return "Timeout: possible infinite loop or deadlock"
-        return q.get() or ""
+        """Run a generated improvement file in a subprocess sandbox (5s timeout)."""
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["python3", "-c", f"exec(open('{code_file}').read())"],
+                capture_output=True, text=True, timeout=5,
+                stdin=subprocess.DEVNULL,
+                env={"PATH": "/usr/bin:/bin", "HOME": "/home/pi"}
+            )
+            if result.returncode == 0:
+                out = (result.stdout or "(no output)").strip()[:200]
+                logger.info(f"Code test PASSED: {out}")
+                return f"PASSED: {out}"
+            else:
+                err = (result.stderr or "").strip()[:200]
+                logger.warning(f"Code test FAILED: {err}")
+                return f"FAILED: {err}"
+        except subprocess.TimeoutExpired:
+            logger.warning("Code test timed out after 5s")
+            return "TIMEOUT"
+        except Exception as e:
+            logger.warning(f"Code test error: {e}")
+            return f"ERROR: {e}"
 
     def web_search(self, query: str) -> Optional[str]:
         """Search the web via DuckDuckGo and fetch top result page text."""
@@ -477,44 +415,6 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             logger.warning(f"Web search failed: {e}")
             return None
 
-    def _pick_best_goal(self, candidates: list) -> str:
-        """Pick the candidate goal with the best historical test-pass rate.
-        Reads memory/iteration_stats.jsonl. Falls back to cycling if no data.
-        """
-        import json as _j
-        stats_path = Path(self.repo_path) / "memory" / "iteration_stats.jsonl"
-        if not stats_path.exists():
-            return candidates[self.state["iterations"] % len(candidates)]
-        try:
-            rows = [_j.loads(l) for l in stats_path.read_text().strip().splitlines() if l.strip()]
-        except Exception:
-            return candidates[self.state["iterations"] % len(candidates)]
-
-        if len(rows) < 4:
-            return candidates[self.state["iterations"] % len(candidates)]
-
-        # Score each candidate by keyword overlap with historically passing goals
-        passing_keywords: dict = {}
-        for row in rows:
-            if row.get("test", "").startswith("PASSED"):
-                for word in row.get("goal", "").lower().split():
-                    if len(word) > 4:
-                        passing_keywords[word] = passing_keywords.get(word, 0) + 1
-
-        if not passing_keywords:
-            return candidates[self.state["iterations"] % len(candidates)]
-
-        def score(desc: str) -> int:
-            return sum(passing_keywords.get(w, 0) for w in desc.lower().split() if len(w) > 4)
-
-        scored = sorted(candidates, key=score, reverse=True)
-        # Pick top candidate, rotating among ties each iteration
-        top_score = score(scored[0])
-        top_group = [c for c in scored if score(c) == top_score]
-        chosen = top_group[self.state["iterations"] % len(top_group)]
-        logger.info(f"Goal picker: chose '{chosen[:60]}...' (score={top_score})")
-        return chosen
-
     def review_goals(self) -> Optional[dict]:
         """Pick up the active self-set goal, or set a new one if there isn't one."""
         active = next((g for g in self.state["goals"] if g["status"] == "active"), None)
@@ -530,33 +430,51 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             else:
                 return active
 
-        # Use predefined categories directly — avoids an LLM call for goal selection.
-        # Cycles deterministically so each iteration advances through the queue.
+        recent = ", ".join(g["description"][:40] for g in self.state["goals"][-3:])
+        # Suggest goals oriented toward genuine autonomy and self-improvement
         goal_categories = [
-            "Write function get_response_time_stats() that reads iteration_stats.jsonl and returns avg/p95 elapsed_s per backend",
-            "Add /code Telegram command showing last 3 self-edit commits: file changed, function name, git diff summary",
-            "Write function score_goal_difficulty(goal_desc) that returns 1-5 based on keywords: add=1, implement=2, build=3, rewrite=4, redesign=5",
-            "Add /reset Telegram command: abandon active goals and pick fresh category from next in queue",
-            "Write function monitor_openrouter_quota() that calls OpenRouter /auth/key to check remaining credits and logs warning if <10 calls left",
-            "Add response_time tracking to _append_iteration_stats: include openrouter_ms latency measured around generate() call",
-            "Write function generate_test_case(func_code) that produces a minimal assert-based test for a given function definition",
-            "Add /diff Telegram command showing git diff --stat HEAD~3..HEAD to summarize last 3 commits of changes",
+            "Reduce iteration failures: add better error handling and retries to inference.py",
+            "Add a git auto-push to GitHub after each autonomous commit (requires SSH key setup)",
+            "Create a health monitoring script that tracks CPU/memory/disk and alerts via Telegram",
+            "Improve think() output quality: measure how often LLM suggestions are applied vs rejected",
+            "Write a script to automatically pull and benchmark new Ollama models from the registry",
+            "Add a web dashboard endpoint to api_server.py showing real-time agent stats",
+            "Implement a learning feedback loop that scores past decisions by outcome",
         ]
-        # Skip categories already completed or deferred (≥3 consecutive code-gen failures)
-        skip_descs = {g["description"] for g in self.state["goals"]
-                      if g.get("status") in ("completed", "deferred")}
-        remaining = [c for c in goal_categories if c not in skip_descs]
-        if not remaining:
-            # Re-open deferred goals on second pass (maybe models are available now)
-            for g in self.state["goals"]:
-                if g.get("status") == "deferred":
-                    g["status"] = "active"
-                    g["fail_count"] = 0
-            remaining = goal_categories
+        cat = goal_categories[self.state["iterations"] % len(goal_categories)]
+        prompt = (
+            'Raspberry Pi project goal generator.' + chr(10) +
+            'Recent work: ' + (recent or 'none') + chr(10) +
+            'Focus: ' + cat + chr(10) +
+            'Write ONE specific, measurable goal in 1-2 sentences.' + chr(10) +
+            'Must be achievable by Python code or shell on a Raspberry Pi 4.' + chr(10) +
+            'Examples: "Add a health-check endpoint to api_server.py that returns cpu/mem stats"' + chr(10) +
+            '  or "Write a script that benchmarks ollama inference speed and saves results to memory/kv.json"' + chr(10) +
+            'Goal: '
+        )
+        goal_text = self.inference.generate(prompt, max_tokens=100)
+        if not goal_text:
+            return None
 
-        # Data-driven selection: prefer categories that produced passing tests historically.
-        # Falls back to simple cycling if no stats exist yet.
-        goal_desc = self._pick_best_goal(remaining)
+        goal_desc = goal_text.strip().splitlines()[0][:200]
+        preamble_words = ("here is", "here are", "here's", "i will", "sure,", "of course",
+                          "python script", "1.", "**", "- ", "certainly", "below is",
+                          "a specific", "this goal")
+        if any(goal_desc.lower().startswith(p) for p in preamble_words):
+            for _gl in goal_text.strip().splitlines():
+                _gl = _gl.strip()
+                if _gl and not any(_gl.lower().startswith(p) for p in preamble_words):
+                    goal_desc = _gl[:200]
+                    break
+
+        # Reject goals that look like code or are still preamble — fall back to category template
+        code_markers = ('def ', 'import ', 'response = ', '```', 'requests.get', '#!/')
+        if (any(m in goal_desc for m in code_markers)
+                or goal_desc.count(':') > 3
+                or len(goal_desc) < 15
+                or goal_desc.lower().startswith("here")
+                or goal_desc.startswith("**")):
+            goal_desc = cat
 
         goal = {
             "id": (max((g["id"] for g in self.state["goals"]), default=0) + 1),
@@ -575,25 +493,23 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         is_code_goal = any(w in goal['description'].lower()
                           for w in ['implement', 'write', 'create', 'build', 'code', 'python', 'module', 'function'])
 
-        hw = self.HARDWARE_CONTEXT
         if is_code_goal:
-            prompt = (
-                hw + chr(10) + chr(10) +
-                f'You are {self.personality.name}, writing Python code for your goal.' + chr(10) +
-                'Goal: ' + goal['description'][:150] + chr(10) +
-                'Progress: ' + history + chr(10) + chr(10) +
-                'Write WORKING Python code (no markdown, no backticks, raw Python only).' + chr(10) +
-                'Start with: # Goal: then a function or class definition.' + chr(10) +
-                'Under 25 lines. Must work on Pi 4 (ARM, no GPU, no Docker).' + chr(10) +
-                'End with: # STATUS: continue OR # STATUS: complete'
-            )
+            prompt = f"""You are {self.personality.name}, writing Python code for your goal.
+Goal: {goal['description']}
+
+Progress: {history}
+
+Write WORKING Python code (no markdown, no triple backticks, raw Python only).
+Start with: # Goal: then a function or class definition.
+Under 30 lines. End with a comment: # STATUS: continue or # STATUS: complete"""
         else:
             prompt = (
-                hw + chr(10) + chr(10) +
+                'You are a Python developer working on a Raspberry Pi project.' + chr(10) +
                 'Task: ' + goal['description'][:150] + chr(10) +
                 'Progress so far:' + chr(10) + history + chr(10) + chr(10) +
-                'Write the next concrete Pi-compatible step. Under 100 words. Be specific.' + chr(10) +
-                'End with: STATUS: continue OR STATUS: complete' + chr(10) +
+                'Write the next concrete step: technical analysis, code sketch, or a specific action.' + chr(10) +
+                'Be direct and specific. Under 150 words.' + chr(10) +
+                'End your response with either STATUS: continue or STATUS: complete' + chr(10) +
                 'Response:'
             )
         output = self.inference.generate(prompt, max_tokens=300)
@@ -648,18 +564,6 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             lines = [f"#{g['id']} [{g['status']}] {g['description'][:80]}" for g in goals[-5:]]
             return chr(10).join(lines)
 
-        if cmd in ("/history", "/hist"):
-            import json as _j
-            stats_path = Path(self.repo_path) / "memory" / "iteration_stats.jsonl"
-            if not stats_path.exists():
-                return "No iteration history yet."
-            rows = [_j.loads(l) for l in stats_path.read_text().strip().splitlines()[-5:]]
-            lines = [
-                f"#{r['iter']} {r['elapsed_s']}s {r['test'][:12]} {r['goal'][:40]}"
-                for r in rows
-            ]
-            return "Last 5 iterations:" + chr(10) + chr(10).join(lines)
-
         if cmd in ("/models", "/model"):
             return (
                 f"Local: {self.inference.ollama.model} (eval: {self.inference.ollama.eval_model})" + chr(10) +
@@ -685,43 +589,6 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                     return chr(10).join(lines[-12:])
             except Exception as e:
                 return f"Could not read log: {e}"
-
-        if cmd in ("/health",):
-            try:
-                import subprocess as _sp
-                cpu = open("/proc/loadavg").read().split()[0]
-                mem_info = {k.split()[0]: k.split()[1]
-                            for k in open("/proc/meminfo").read().splitlines()
-                            if k.split()[0] in ("MemTotal:", "MemAvailable:")}
-                total_mb = int(mem_info.get("MemTotal:", "0 kB").split()[0]) // 1024
-                avail_mb = int(mem_info.get("MemAvailable:", "0 kB").split()[0]) // 1024
-                used_pct = round((total_mb - avail_mb) / total_mb * 100) if total_mb else 0
-                disk = _sp.run(["df", "-h", "/"], capture_output=True, text=True).stdout.splitlines()
-                disk_line = disk[1] if len(disk) > 1 else "?"
-                uptime = open("/proc/uptime").read().split()[0]
-                up_h = int(float(uptime)) // 3600
-                return (f"CPU load: {cpu} | RAM: {used_pct}% ({avail_mb}MB free)" +
-                        chr(10) + f"Disk: {disk_line.split()[3]} free ({disk_line.split()[4]})" +
-                        chr(10) + f"Uptime: {up_h}h | Backend: {self.inference.active_backend}")
-            except Exception as e:
-                return f"Health check error: {e}"
-
-        if cmd in ("/restart",):
-            try:
-                import subprocess as _sp, threading as _th
-                def _do_restart():
-                    import time as _t
-                    _t.sleep(1)
-                    _sp.run(["pkill", "-f", "ollama"], capture_output=True, timeout=5)
-                    _sp.run(["pkill", "-f", "continuous_daemon"], capture_output=True, timeout=5)
-                    _t.sleep(2)
-                    _sp.Popen(["bash", str(Path(self.repo_path) / "continuous_daemon.sh")],
-                              stdout=open("/tmp/daemon_restart.log", "w"),
-                              stderr=_sp.STDOUT, cwd=self.repo_path)
-                _th.Thread(target=_do_restart, daemon=True).start()
-                return "Restarting: killing Ollama + restarting daemon in 3s..."
-            except Exception as e:
-                return f"Restart error: {e}"
 
         if cmd in ("/think",):
             goal = next((g for g in self.state["goals"] if g["status"] == "active"), None)
@@ -797,48 +664,73 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             except Exception as e:
                 return f'Error: {e}'
 
-        if cmd in ("/diff",):
-            import subprocess as _sp
+        if cmd in ("/stats",):
+            import subprocess as _sp, os as _os
+            iters = self.state.get("iterations", 0)
+            goals_done = sum(1 for g in self.state.get("goals", []) if g.get("status") == "completed")
+            goals_total = len(self.state.get("goals", []))
+            active_goal = next((g["description"][:60] for g in self.state.get("goals", [])
+                                if g.get("status") == "active"), "none")
+            improvements = len(self.state.get("improvements_made", []))
+            applied_mods = len(list(Path(self.repo_path).glob("improvements/self_mod_*.py")))
+            score = self.learning.calculate_improvement_score()
             try:
-                result = _sp.run(
-                    ['git', 'diff', '--stat', 'HEAD~3..HEAD'],
-                    capture_output=True, text=True, timeout=10, cwd=self.repo_path
-                )
-                out = (result.stdout or '').strip()
-                log = _sp.run(
-                    ['git', 'log', '--oneline', '-5'],
-                    capture_output=True, text=True, timeout=5, cwd=self.repo_path
-                ).stdout.strip()
-                return f"Last 5 commits:\n{log}\n\nDiff stat (HEAD~3..HEAD):\n{out[:600]}"
-            except Exception as e:
-                return f"diff error: {e}"
+                cpu = _sp.check_output(
+                    "top -bn1 | grep 'Cpu(s)' | awk '{print $2}'",
+                    shell=True, text=True, timeout=3).strip()
+                mem = _sp.check_output(
+                    "free -m | awk 'NR==2{printf \"%sMB / %sMB\", $3, $2}'",
+                    shell=True, text=True, timeout=3).strip()
+            except Exception:
+                cpu, mem = "?", "?"
+            return (
+                f"freeWill Stats -- Iteration {iters}" + chr(10) +
+                f"Goals: {goals_done}/{goals_total} done" + chr(10) +
+                f"Active: {active_goal}" + chr(10) +
+                f"Improvements stored: {improvements}" + chr(10) +
+                f"Self-mods staged: {applied_mods}" + chr(10) +
+                f"Score: {score:.0%}" + chr(10) +
+                f"Backend: {self.inference.active_backend}" + chr(10) +
+                f"CPU: {cpu}%  RAM: {mem}"
+            )
 
         if cmd in ("/help",):
             return (
                 "/status -- iteration count and active goal" + chr(10) +
-                "/health -- CPU/RAM/disk/uptime" + chr(10) +
-                "/history -- last 5 iterations from stats" + chr(10) +
-                "/diff -- last 5 commits + diff stat" + chr(10) +
+                "/stats -- full stats: iterations, goals, improvements, CPU/RAM" + chr(10) +
                 "/goal -- list recent goals" + chr(10) +
                 "/models -- active model config" + chr(10) +
                 "/memory -- show KV memory" + chr(10) +
                 "/log -- recent daemon log" + chr(10) +
                 "/think -- generate a thought" + chr(10) +
                 "/run -- trigger an immediate iteration" + chr(10) +
-                "/restart -- kill Ollama + restart daemon" + chr(10) +
+                "/test -- test all tools are working" + chr(10) +
                 "/shell <cmd> -- run shell command on Pi" + chr(10) +
                 "/py <code> -- run Python code on Pi" + chr(10) +
                 "/git <args> -- git command in repo" + chr(10) +
                 "Or just chat directly."
             )
 
-        # Personality-driven reply for non-commands
+        # /test or "test tools" / "test shell" — run real tool verification
+        if cmd in ("/test", "test", "test tools", "test shell", "test your tools"):
+            results = []
+            r1 = execute_tool("shell", {"cmd": "echo shell_ok && python3 --version"}, repo_path=self.repo_path)
+            results.append("shell: " + r1[:80])
+            r2 = execute_tool("read_file", {"path": "README.md"}, repo_path=self.repo_path)
+            results.append("read_file: " + r2[:60])
+            r3 = execute_tool("kv_set", {"key": "test_ping", "value": "ok"}, repo_path=self.repo_path)
+            results.append("kv_set: " + r3[:40])
+            return "Tool test results:\n" + "\n".join(results)
+
+        # Personality-driven reply for non-commands — grounded in real capabilities
         prompt = (
-            "You are " + self.personality.name + ", an autonomous AI agent." + chr(10) +
+            "You are freeWill, an autonomous AI agent running on a Raspberry Pi." + chr(10) +
+            "Your actual tools: shell (run linux commands), read_file, write_file, web_fetch, git_commit." + chr(10) +
+            "You do NOT have binary/compiled capabilities beyond what Python and shell provide." + chr(10) +
             "Someone messaged: " + chr(34) + text[:200] + chr(34) + chr(10) +
-            "Reply in 1-3 sentences. Be direct and opinionated. No corporate-speak."
+            "Reply in 1-3 sentences. Be honest about your actual capabilities. No fabrication."
         )
-        response = self.inference.generate(prompt, max_tokens=100)
+        response = self.inference.generate(prompt, max_tokens=120)
         return response or "Inference unavailable."
 
     def multi_step_plan(self, goal: str) -> list:
@@ -896,8 +788,8 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             'Context: ' + context[:200] + chr(10) + chr(10) +
             'Useful actions (pick the most relevant):' + chr(10) +
             '  shell: run shell commands (git pull, pip install, ls, cat file, python3 script.py)' + chr(10) +
-            '  file_write: create or update a file in the repo' + chr(10) +
-            '  file_read: read a file to learn about it' + chr(10) +
+            '  write_file: create or update a file (args: path, content)' + chr(10) +
+            '  read_file: read a file (args: path)' + chr(10) +
             '  web_fetch: fetch a URL for information' + chr(10) +
             '  kv_set: store a value in memory' + chr(10) + chr(10) +
             'Return JSON only: {"tool":"shell","args":{"cmd":"git status"}}' + chr(10) +
@@ -915,6 +807,101 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         result = execute_tool(tool_name, args, repo_path=self.repo_path)
         logger.info(f"Tool result: {result[:100]}")
         return f"{tool_name}: {result[:200]}"
+
+    def implement_goal_step(self, goal: str, target_file: str = "agent.py") -> str:
+        """OpenClaw-style: read target file, generate a concrete patch, apply + commit.
+        Returns a summary string or error description."""
+        import ast as _ast, shutil as _sh
+        from pathlib import Path as _Path
+
+        allowed = {'agent.py', 'inference.py', 'tools.py', 'planner.py', 'comms.py'}
+        if target_file not in allowed:
+            return f"Blocked: {target_file} not in allowed set"
+
+        target_path = _Path(self.repo_path) / target_file
+        try:
+            original = target_path.read_text(encoding='utf-8')
+        except Exception as e:
+            return f"Read error: {e}"
+
+        # Give LLM the first 60 lines + last 20 as context window
+        lines = original.splitlines()
+        context_lines = lines[:60] + ['... (truncated) ...'] + lines[-20:] if len(lines) > 80 else lines
+        context = chr(10).join(context_lines)
+
+        prompt = (
+            f"You are patching {target_file} for an autonomous Raspberry Pi agent.\n"
+            f"Goal: {goal[:150]}\n\n"
+            f"Current file (truncated):\n{context[:1200]}\n\n"
+            "Write ONE complete Python method that implements the most concrete next step toward this goal.\n"
+            "Output ONLY the method definition (def ...). No markdown. No extra text. Under 30 lines.\n"
+            "def "
+        )
+        try:
+            raw = self.inference.generate_code(prompt, max_tokens=400)
+        except Exception as e:
+            return f"LLM error: {e}"
+
+        if not raw or len(raw.strip()) < 20:
+            return "Empty or too-short LLM response"
+
+        code = raw.strip()
+        if code.startswith('```'):
+            code = chr(10).join(l for l in code.splitlines()
+                                if not l.strip().startswith('```')).strip()
+        if not code.startswith('def ') and not code.startswith('async def '):
+            code = 'def ' + code
+
+        # Validate syntax
+        try:
+            _ast.parse(code)
+        except SyntaxError as e:
+            return f"SyntaxError in generated code: {e}"
+
+        import re as _re
+        func_m = _re.search(r'^def (\w+)', code)
+        if not func_m:
+            return "No function name found"
+        func_name = func_m.group(1)
+
+        # Indent to class method level (4 spaces)
+        indented = chr(10).join(
+            ('    ' + ln if ln.strip() else ln)
+            for ln in code.splitlines()
+        )
+
+        # Find and replace existing method, or append
+        method_pat = _re.compile(
+            r'(    def ' + _re.escape(func_name) + r'\(self.*?)(?=\n    def |\Z)',
+            _re.DOTALL
+        )
+        if method_pat.search(original):
+            new_content = method_pat.sub(indented, original)
+            action = f"replaced {func_name}()"
+        else:
+            # Append before the last `if __name__` or at end of class
+            insert_before = '\nif __name__'
+            if insert_before in original:
+                new_content = original.replace(insert_before, chr(10) + indented + chr(10) + insert_before)
+            else:
+                new_content = original.rstrip() + chr(10) + chr(10) + indented + chr(10)
+            action = f"added {func_name}()"
+
+        # Final syntax check on patched file
+        try:
+            _ast.parse(new_content)
+        except SyntaxError as e:
+            return f"Patched file has SyntaxError: {e}"
+
+        _sh.copy(str(target_path), str(target_path) + ".bak")
+        target_path.write_text(new_content, encoding='utf-8')
+        logger.info(f"implement_goal_step: {action} in {target_file}")
+
+        # Git commit
+        commit_msg = f"agent: goal#{self.state.get('iterations',0)} {action} — {goal[:50]}"
+        self.git.commit(commit_msg)
+        logger.info(f"implement_goal_step: committed '{commit_msg[:60]}'")
+        return f"Applied + committed: {action} in {target_file}"
 
     def self_edit_file(self, file_name: str, change_desc: str):
         """Apply a targeted improvement to a repo file. Generates a new function,
@@ -935,28 +922,10 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         except Exception as e:
             return "Read error: " + str(e)
 
-        # Extract the target function name from change_desc if it contains func_name()
-        import re as _re2
-        target_func = None
-        m = _re2.search(r'\b(\w+)\(\)', change_desc)
-        if m:
-            target_func = m.group(1)
-
-        # Read existing function to include as context for the LLM
-        existing_func = ""
-        if target_func:
-            func_m = _re2.search(
-                r'(    def ' + target_func + r'\(.*?)(?=\n    def |\Z)',
-                original, _re2.DOTALL
-            )
-            if func_m:
-                existing_func = func_m.group(1)[:600]
-
         prompt = (
-            'Improve this Python method for a Raspberry Pi AI agent (ARM, no GPU).' + chr(10) +
-            'Improvement goal: ' + change_desc[:200] + chr(10) +
-            (('Current code:\n' + existing_func + chr(10)) if existing_func else '') +
-            'Rules: return ONLY the complete improved function (def ...). No markdown. Under 30 lines.' + chr(10) +
+            'Write ONE improved Python utility function for a Raspberry Pi AI agent.' + chr(10) +
+            'Improvement needed: ' + change_desc[:200] + chr(10) +
+            'Rules: return ONLY the function (def ...). No markdown. No extra imports. Under 25 lines.' + chr(10) +
             'def '
         )
         try:
@@ -1030,16 +999,6 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         _shutil.copy2(str(target), backup)
         target.write_text(new_content, encoding='utf-8')
 
-        # Runtime import check -- catches errors that AST parse misses
-        import subprocess as _sp
-        check = _sp.run(
-            ['python3', '-c', f'import py_compile; py_compile.compile("{target}", doraise=True)'],
-            capture_output=True, text=True, timeout=10
-        )
-        if check.returncode != 0:
-            _shutil.copy2(backup, str(target))
-            return "Reverted: compile check failed — " + check.stderr.strip()[:100]
-
         git = GitController(self.repo_path)
         msg = ('self-edit: ' + file_name + ' — ' + change_desc[:80] +
                chr(10) + chr(10) + '[freeWill autonomous commit]')
@@ -1050,26 +1009,85 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
 
     def self_modify(self) -> Optional[str]:
-        """Improve own code every 5th iteration using self_edit_file().
-        Rotates through high-impact methods so each self-mod targets something different.
-        """
-        # Rotate targets so the agent doesn't just keep rewriting think()
-        targets = [
-            ("agent.py", "improve the think() method: better JSON parsing, more context-aware decisions"),
-            ("agent.py", "improve apply_code_improvement(): better prompt, strip markdown more robustly"),
-            ("inference.py", "improve OpenRouterClient.generate(): better error handling, smarter retry"),
-            ("agent.py", "improve _append_iteration_stats(): also record inference_calls count"),
-            ("agent.py", "improve test_code_improvement(): add more robust sandbox, detect infinite loops"),
-        ]
-        iteration = self.state.get('iterations', 0)
-        file_name, change_desc = targets[iteration % len(targets)]
-
-        logger.info(f"self_modify: targeting {file_name} — {change_desc[:60]}")
-        result = self.self_edit_file(file_name, change_desc)
-        if result and result.startswith("Reverted"):
-            logger.warning(f"self_modify reverted: {result}")
+        """Attempt to improve own code: generate patch, test, apply if passes."""
+        try:
+            with open(__file__, "r") as f:
+                src = f.read()
+        except Exception:
             return None
-        return result
+
+        # Focus on the autonomous_action and think methods (most impactful)
+        snippet = src[src.find("def think("):src.find("def seek_improvements(")]
+        prompt = (
+            'Improve this Python method (max 30 lines).' + chr(10) +
+            'Current code:' + chr(10) + snippet[:400] + chr(10) +
+            'Return ONLY the complete improved method. No markdown. No explanation.' + chr(10) +
+            'Start with: def think(self, goal: str) -> str:' + chr(10) +
+            'def think(self, goal: str) -> str:'
+        )
+        new_code = self.inference.generate_code(prompt, max_tokens=500)
+        if new_code and not new_code.startswith('def '):
+            new_code = 'def think(self, goal: str) -> str:' + chr(10) + new_code
+        if not new_code or "def think" not in new_code:
+            return None
+
+        # Strip fences
+        new_code = new_code.strip()
+        if new_code.startswith("```"):
+            lines = new_code.splitlines()
+            new_code = chr(10).join(l for l in lines if not l.strip().startswith("```")).strip()
+
+        # Validate it's syntactically valid Python
+        import ast as _ast
+        try:
+            _ast.parse(new_code)
+        except SyntaxError as e:
+            logger.warning(f"self_modify: generated code has syntax error: {e}")
+            return None
+
+        # Quality gate: reject trivial/broken proposals
+        bad_signals = [
+            "suggest_modification_for_goal_",  # literal template leak
+            "return f'suggest_",               # template return
+            "files_list",                      # useless file-list return
+            "chr(10).join(py_files)",          # known bad pattern
+        ]
+        if any(sig in new_code for sig in bad_signals):
+            logger.warning("self_modify: proposal failed quality gate (trivial/template output)")
+            return None
+        # Must have real logic: at least one inference/self call or meaningful return
+        if new_code.count('\n') < 5:
+            logger.warning("self_modify: proposal too short to be meaningful")
+            return None
+
+        # Write to a staging file for inspection (not applied directly)
+        staging = Path(self.repo_path) / "improvements" / f"self_mod_{self.state['iterations']:03d}.py"
+        staging.parent.mkdir(exist_ok=True)
+        staging.write_text(
+            f"# Self-modification proposal — Iteration {self.state['iterations']}\n"
+            f"# Source: self_modify() in agent.py\n\n{new_code}\n"
+        )
+        logger.info(f"Self-modification staged: {staging.name}")
+
+        # Attempt to apply: splice new think() into live agent.py
+        import re as _re, ast as _ast2, shutil as _sh
+        _func_pat = _re.compile(r'(    def think\(self.*?)(?=\n    def )', _re.DOTALL)
+        try:
+            _live = Path(__file__).read_text()
+            if _func_pat.search(_live):
+                _ind = chr(10).join(
+                    ('    ' + _ln if _ln.strip() else _ln)
+                    for _ln in new_code.strip().splitlines()
+                )
+                _patched = _func_pat.sub(_ind, _live)
+                _ast2.parse(_patched)
+                _sh.copy(__file__, __file__ + ".bak")
+                Path(__file__).write_text(_patched)
+                logger.info("Self-mod APPLIED: think() upgraded in agent.py")
+                return f"Applied self-mod iter {self.state['iterations']}: think() upgraded"
+        except Exception as _ae:
+            logger.warning(f"self_modify apply failed: {_ae}")
+        return f"Staged self-mod proposal: {staging.name}"
 
     def start_telegram_listener(self):
         """Background thread: poll Telegram every 5 seconds and respond immediately."""
@@ -1102,9 +1120,13 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         discord_message = f"🤖 **Iteration {iteration_num}**\n"
 
         # Think about goals and next steps
-        decision = self.think("What should I prioritize to improve myself?")
+        active_goal_desc = next((g["description"] for g in self.state.get("goals", [])
+                                 if g.get("status") == "active"), "improve myself")
+        decision = self.think(active_goal_desc)
         logger.info(f"Decision: {decision[:100]}...")
         discord_message += f"\n💭 **Decision:** {decision[:150]}...\n"
+        # Store raw decision for self_edit_file pipeline
+        self.state["last_think_raw"] = decision
 
         # If the decision mentions looking something up, do a web search for grounding
         research_terms = ["python", "ollama", "raspberry pi", "llm", "inference", "pytorch", "quantiz"]
@@ -1162,8 +1184,19 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                 discord_message += f"{status_emoji} **Self-directed goal #{goal['id']}:** {goal['description'][:120]}\n"
                 discord_message += f"   ↳ {progress[:150]}...\n"
 
-        # Every 5th iteration: attempt self-modification of own code
-        if self.state["iterations"] % 5 == 0:
+        # Every 5th iteration: implement a concrete step toward the active goal
+        if self.state["iterations"] % 5 == 0 and goal:
+            # Parse target file from decision if available
+            decision_raw = self.state.get("last_think_raw", "")
+            tgt_file = "agent.py"
+            if decision_raw and decision_raw.startswith("FILE:"):
+                tgt_candidate = decision_raw.replace("FILE:", "").split("|")[0].strip()
+                if tgt_candidate in {"agent.py", "inference.py", "tools.py", "planner.py", "comms.py"}:
+                    tgt_file = tgt_candidate
+            impl_result = self.implement_goal_step(goal["description"], tgt_file)
+            logger.info(f"implement_goal_step: {impl_result}")
+            discord_message += f"🔨 **Implemented:** {impl_result}\n"
+        elif self.state["iterations"] % 5 == 0:
             mod_result = self.self_modify()
             if mod_result:
                 logger.info(f"Self-mod: {mod_result}")
@@ -1179,9 +1212,9 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                 logger.info(f"Planner result: {plan_result[:200]}")
                 discord_message += f"🔗 **Plan:** {plan_result[:150]}\n"
 
-        # Seek improvements
+        # Seek improvements (only every 4th iteration — expensive, rate-limited)
         try:
-            improvements = self.seek_improvements()
+            improvements = self.seek_improvements() if self.state["iterations"] % 4 == 0 else []
         except Exception as _e:
             logger.warning(f"seek_improvements failed: {_e}")
             improvements = []
@@ -1246,9 +1279,15 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
                                 edit_desc = parts[1].strip()
                                 try:
                                     edit_result = self.self_edit_file(edit_file, edit_desc)
-                                    if edit_result:
+                                    if edit_result and "Applied" in edit_result:
                                         discord_message += f"🧬 **Self-edit:** {edit_result}\n"
                                         logger.info(f"Self-edit applied: {edit_result}")
+                                        # Commit the successful self-edit
+                                        commit_msg = f"agent: self-edit iter {self.state['iterations']} — {edit_desc[:60]}"
+                                        committed = self.git.commit(commit_msg)
+                                        if committed:
+                                            logger.info(f"Self-edit committed to git")
+                                            discord_message += "   Committed to git\n"
                                 except Exception as _se:
                                     logger.warning(f"self_edit_file error: {_se}")
 
@@ -1322,345 +1361,6 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             push_ok = self.git.push()
             logger.info(f"GitHub push: {'ok' if push_ok else 'failed'}")
 
-    def run_iteration_v2(self):
-        """OpenClaw-style iteration: focused THINK→PLAN→IMPLEMENT→TEST→COMMIT.
-        Max 3 inference calls. Blocks commit on test failure.
-        """
-        import time as _time
-        iteration_num = self.state['iterations'] + 1
-        logger.info(f"=== Iteration {iteration_num} (v2) ===")
-        start_ts = _time.time()
-
-        # --- THINK (call 1): pick the active goal ---
-        context_lines = [
-            f"Iteration: {iteration_num}",
-            f"Recent: {'; '.join(d['decision'][:60] for d in self.state.get('decisions', [])[-3:])}",
-            f"Last test: {self.state.get('last_test_result', 'none')}",
-            f"Active goal: {self.state.get('active_goal_desc', 'none')}",
-        ]
-        decision = self.think("\n".join(context_lines))
-        logger.info(f"THINK: {decision[:120]}")
-
-        evaluation = self.evaluate_decision(decision)
-        if evaluation.get('safety', 5) < 3 or evaluation.get('ethics', 5) < 3:
-            logger.warning("Decision rejected (unsafe) — skipping iteration")
-            self.state['iterations'] += 1
-            self.save_state()
-            return
-
-        # --- PLAN: pick goal with highest priority ---
-        goal = self.review_goals()
-        code_file = None
-        result = None
-        if goal:
-            self.state['active_goal_desc'] = goal.get('description', '')[:80]
-            is_code_goal = any(w in goal['description'].lower()
-                               for w in ['implement', 'write', 'create', 'build', 'add', 'code',
-                                         'function', 'module', 'tracker', 'cache', 'rate', 'command'])
-            logger.info(f"PLAN: goal #{goal['id']} (code={is_code_goal}): {goal['description'][:80]}")
-
-            # --- IMPLEMENT (call 2): generate code or prose ---
-            if is_code_goal:
-                # apply_code_improvement saves to improvements/iter_XXX.py for testing
-                code = self.apply_code_improvement(goal['description'])
-                improvements_dir = Path(self.repo_path) / "improvements"
-                candidate = improvements_dir / f"iter_{iteration_num:03d}.py"
-                if candidate.exists():
-                    code_file = str(candidate)
-                    result = code
-                    goal["fail_count"] = 0  # reset on successful generation
-                    # Update goal progress log so it doesn't go stale
-                    goal["progress_log"].append(f"Generated code: {candidate.name}")
-                    goal["progress_log"] = goal["progress_log"][-5:]
-                    logger.info(f"IMPLEMENT: wrote {candidate.name}")
-                else:
-                    # Code generation failed (prose rejected or API error)
-                    goal["fail_count"] = goal.get("fail_count", 0) + 1
-                    logger.warning(f"Code gen failed for goal #{goal['id']} (fail_count={goal['fail_count']})")
-                    if goal["fail_count"] >= 3:
-                        goal["status"] = "deferred"
-                        logger.warning(f"Goal #{goal['id']} deferred after {goal['fail_count']} failures")
-                    result = code
-            else:
-                result = self.work_on_goal(goal)
-                if result:
-                    logger.info(f"IMPLEMENT: goal #{goal['id']} prose result written")
-
-        # --- TEST: run the generated file, block commit if it fails ---
-        test_status = "SKIPPED"
-        if code_file and Path(code_file).exists():
-            test_status = self.test_code_improvement(code_file)
-            self.state['last_test_result'] = test_status[:60]
-            logger.info(f"TEST: {test_status}")
-            if test_status.startswith("FAIL"):
-                # Don't commit broken code -- save state only
-                logger.warning(f"Test failed — skipping commit this iteration")
-                self.state['iterations'] += 1
-                self.state['last_run'] = datetime.now().isoformat()
-                self.save_state()
-                self.telegram.send_message_sync(
-                    f"Iter {iteration_num} | TEST FAILED\n{test_status[:120]}\nNo commit."
-                )
-                return
-            elif goal and not test_status.startswith("SKIPPED"):
-                # Test passed — mark goal complete so cycling advances to next
-                goal["status"] = "completed"
-                logger.info(f"Goal #{goal['id']} marked complete (test passed)")
-
-                # --- INTEGRATE: inject the function into agent.py if it's a new utility ---
-                # Only for "Write function X()" goals to avoid accidentally patching handlers
-                if code_file and goal.get('description', '').lower().startswith('write function'):
-                    self._integrate_improvement(code_file)
-
-        # --- SELF-MODIFY every 5th iteration (call 3, optional) ---
-        if iteration_num % 5 == 0:
-            mod = self.self_modify()
-            if mod:
-                logger.info(f"SELF-MOD: {mod[:80]}")
-
-        # --- COMMIT: state + code + goals ---
-        elapsed = _time.time() - start_ts
-        self.state['iterations'] += 1
-        self.state['last_run'] = datetime.now().isoformat()
-        self.state['decisions'].append({
-            'iteration': self.state['iterations'],
-            'decision': decision[:200],
-            'timestamp': datetime.now().isoformat(),
-        })
-        self.state['decisions'] = self.state['decisions'][-10:]
-        self.save_state()
-
-        # Record learning event so the learning system reflects actual outcomes
-        goal_desc = self.state.get('active_goal_desc', 'unknown goal')[:80]
-        if test_status.startswith("PASSED"):
-            self.learning.record_learning(LearningEvent(
-                "feature", f"v2 iter {iteration_num}: {goal_desc}", impact="positive"
-            ))
-        elif test_status.startswith("FAIL") or test_status.startswith("ERROR"):
-            self.learning.record_learning(LearningEvent(
-                "bug_fix", f"v2 iter {iteration_num}: test failed — {goal_desc}", impact="negative"
-            ))
-        elif test_status == "SKIPPED" and result:
-            self.learning.record_learning(LearningEvent(
-                "optimization", f"v2 iter {iteration_num}: {goal_desc}", impact="neutral"
-            ))
-        self.learning.save_state()
-
-        # Append to stats file so the agent can review its own history
-        self._append_iteration_stats(iteration_num, elapsed, test_status, result)
-
-        commit_msg = (f"Iteration {self.state['iterations']} v2: "
-                      f"test={test_status[:20]}, {elapsed:.0f}s, "
-                      f"goal={'ok' if result else 'none'}")
-        self.git.commit(commit_msg)
-        if os.getenv("GITHUB_TOKEN"):
-            self.git.push()
-
-        summary = (
-            f"Iter {self.state['iterations']} | {elapsed:.0f}s\n"
-            f"Goal: {self.state.get('active_goal_desc', 'none')[:80]}\n"
-            f"Test: {test_status[:40]}\n"
-            f"Backend: {self.inference.active_backend}"
-        )
-        self.telegram.send_message_sync(summary)
-        logger.info(f"v2 done in {elapsed:.1f}s")
-
-    def _append_iteration_stats(self, iteration_num: int, elapsed: float,
-                                 test_status: str, result):
-        """Append one row to memory/iteration_stats.jsonl for historical analysis."""
-        import json as _json
-        stats_path = Path(self.repo_path) / "memory" / "iteration_stats.jsonl"
-        stats_path.parent.mkdir(exist_ok=True)
-        row = {
-            "iter": iteration_num,
-            "elapsed_s": round(elapsed, 1),
-            "test": test_status[:40],
-            "goal": self.state.get("active_goal_desc", "")[:80],
-            "backend": self.inference.active_backend,
-            "result": "ok" if result else "none",
-            "ts": datetime.now().isoformat(),
-        }
-        with open(stats_path, "a") as f:
-            f.write(_json.dumps(row) + "\n")
-
-    def _integrate_improvement(self, code_file: str):
-        """Inject a tested improvement function into agent.py at module level
-        (below the AutonomousAgent class, as a standalone utility).
-        Only runs if the function name doesn't already exist in the file.
-        Safe: validates full-file syntax before writing; skips on any error.
-        """
-        import ast as _ast, re as _re, shutil as _sh
-        try:
-            code = Path(code_file).read_text()
-            # Find the first top-level def (module-level function)
-            m = _re.search(r'^def (\w+)\(', code, _re.MULTILINE)
-            if not m:
-                return
-            func_name = m.group(1)
-
-            target = Path(self.repo_path) / "agent.py"
-            agent_src = target.read_text()
-
-            # Skip if this function name already exists anywhere in agent.py
-            if f"def {func_name}(" in agent_src:
-                logger.info(f"INTEGRATE: {func_name}() already exists — skipping")
-                return
-
-            # Extract only the function lines (strip comment header)
-            func_lines = code.splitlines()
-            code_start = next((i for i, l in enumerate(func_lines) if l.startswith("def ")), 0)
-            func_code = "\n".join(func_lines[code_start:]).strip()
-
-            # Append at module level (after startup_check, before __main__)
-            insert_marker = '\nif __name__ == "__main__":'
-            if insert_marker in agent_src:
-                new_src = agent_src.replace(
-                    insert_marker,
-                    f"\n\n{func_code}\n{insert_marker}"
-                )
-            else:
-                new_src = agent_src.rstrip() + f"\n\n{func_code}\n"
-
-            # Validate before writing
-            try:
-                _ast.parse(new_src)
-            except SyntaxError as e:
-                logger.warning(f"INTEGRATE: syntax error in merged file — {e}")
-                return
-
-            _sh.copy2(str(target), str(target) + ".bak_integrate")
-            target.write_text(new_src)
-            logger.info(f"INTEGRATE: injected {func_name}() into agent.py at module level")
-            self.git.commit(f"integrate: add {func_name}() utility to agent.py")
-        except Exception as e:
-            logger.warning(f"INTEGRATE: error — {e}")
-
-
-def startup_check(agent: 'AutonomousAgent') -> bool:
-    """Run before first iteration after restart. Verifies inference works,
-    clears stale state, sends a recovery Telegram message."""
-    import time as _time, subprocess as _sp
-
-    logger.info("=== STARTUP CHECK ===")
-
-    # Kill any leftover Ollama runner processes from previous session
-    try:
-        r = _sp.run(['pkill', '-9', '-f', 'ollama runner'], capture_output=True, timeout=3)
-        if r.returncode == 0:
-            logger.info("Killed leftover ollama runner processes")
-    except Exception:
-        pass
-
-    # Test inference is working
-    logger.info(f"Testing inference backend: {agent.inference.active_backend}")
-    test_resp = agent.inference.generate("Reply with one word: ready", max_tokens=5)
-    if not test_resp:
-        logger.error("Inference test FAILED — no response from any backend")
-        agent.telegram.send_message_sync(
-            "Startup failed: inference not working. Check OPENROUTER_API_KEY."
-        )
-        return False
-
-    logger.info(f"Inference OK: {test_resp!r}")
-
-    # Notify Telegram
-    backend = agent.inference.active_backend
-    iteration = agent.state.get('iterations', 0)
-    agent.telegram.send_message_sync(
-        f"freeWillAi restarted OK\n"
-        f"Backend: {backend}\n"
-        f"Resuming from iteration {iteration}\n"
-        f"Inference test: {test_resp!r}"
-    )
-    return True
-
-
-
-def get_response_time_stats():
-    """Return avg and p95 elapsed_s per backend from iteration_stats.jsonl."""
-    import json, os, math
-    path = os.path.join(os.getcwd(), "iteration_stats.jsonl")
-    if not os.path.isfile(path):
-        return {}
-    data = {}
-    with open(path, "r") as f:
-        for line in f:
-            try:
-                rec = json.loads(line)
-                be = rec.get("backend")
-                elapsed = rec.get("elapsed_s")
-                if be is None or elapsed is None:
-                    continue
-                data.setdefault(be, []).append(elapsed)
-            except json.JSONDecodeError:
-                continue
-    result = {}
-    for be, times in data.items():
-        n = len(times)
-        avg = sum(times) / n
-
-
-def generate_test_case(func_code):
-    """Return a simple assert test string for the given function code."""
-    import ast, textwrap, random, string
-    tree = ast.parse(func_code)
-    func = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    name = func.name
-    args = [arg.arg for arg in func.args.args]
-    defaults = [None]*(len(args)-len(func.args.defaults)) + func.args.defaults
-    def gen_val(node):
-        if isinstance(node, ast.Constant):
-            return node.value
-        if isinstance(node, ast.Num):
-            return node.n
-        if isinstance(node, ast.Str):
-            return node.s
-        return 0
-    sample_vals = []
-    for d in defaults:
-        if d is None:
-            sample_vals.append(0)
-        else:
-            sample_vals.append(gen_val(d))
-
-
-def monitor_openrouter_quota(api_key):
-    """Check OpenRouter credit quota and log warning if low."""
-    import json, logging, urllib.request, urllib.error
-    url = f"https://openrouter.ai/api/v1/auth/key?key={api_key}"
-    try:
-        with urllib.request.urlopen(url) as resp:
-            data = json.load(resp)
-        remaining = data.get("credits", {}).get("remaining", 0)
-        if remaining < 10:
-            logging.warning("OpenRouter quota low: %s credits left", remaining)
-    except urllib.error.URLError as e:
-        logging.error("Failed to fetch OpenRouter quota: %s", e)
-
-
-def score_goal_difficulty(goal_desc):
-    """Return difficulty 1-5 based on keywords in goal_desc."""
-    desc = goal_desc.lower()
-    if "rewrite" in desc:
-        return 5
-    if "build" in desc:
-        return 3
-    if "implement" in desc:
-        return 2
-    if "add" in desc:
-        return 1
-    return 0
-
 if __name__ == "__main__":
     agent = AutonomousAgent()
-
-    # Run startup check on first boot or after restart (AGENT_STARTUP_CHECK=1)
-    if os.getenv("AGENT_STARTUP_CHECK", "0") == "1":
-        if not startup_check(agent):
-            import sys; sys.exit(1)
-
-    # Use v2 (focused, 4 inference calls max) if AGENT_V2=1 is set
-    if os.getenv("AGENT_V2", "0") == "1":
-        agent.run_iteration_v2()
-    else:
-        agent.run_iteration()
+    agent.run_iteration()

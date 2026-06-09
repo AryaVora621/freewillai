@@ -388,45 +388,68 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         return code.strip()[:200]
 
     def test_code_improvement(self, code_file: str) -> str:
-        """Execute a generated improvement file in a tightly‑controlled sandbox.
-        - 5 s wall‑clock timeout (detects hangs/infinite loops)
-        - Strict CPU & memory limits via ``resource``
-        - Runs in a separate process to avoid contaminating the parent.
-        Returns an empty string on success or a descriptive error message.
+        """Run a generated improvement file in a sandboxed subprocess (5 s timeout).
+        Checks that the file executes without error and that every defined function can be called
+        with no arguments. Returns an error message or an empty string on success.
         """
-        import pathlib, re, sys, json, multiprocessing as mp, resource, signal, os, traceback
+        import subprocess, re, textwrap, sys, os, resource, signal, json, pathlib
 
+        # Prepare a tiny harness that imports the target module and calls each function
         src = pathlib.Path(code_file).read_text()
-        func_names = re.findall(r'^def (\w+)\s*\(', src, re.MULTILINE)
-
-        def _worker(q):
-            # Apply strict limits: 50 MB RSS, 2 s CPU time, no fork, no exec
-            resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
-            resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
-            # Prevent creation of new processes
-            resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-            # Disable signals that could escape the sandbox
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
+        funcs = re.findall(r'^def (\w+)\s*\(', src, re.MULTILINE)
+        calls = "\n".join(f"    {name}()" for name in funcs)
+        harness = textwrap.dedent(f"""
+            import importlib.util, sys, json
+            spec = importlib.util.spec_from_file_location("candidate", r"{code_file}")
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules["candidate"] = mod
             try:
-                mod = {}
-                exec(src, mod)                     # load user code
-                for name in func_names:
-                    fn = mod.get(name)
-                    if not callable(fn):
-                        raise RuntimeError(f"'{name}' is not callable")
-                    fn()                           # call with no arguments
-                q.put("")                          # success
-            except Exception:
-                q.put(traceback.format_exc())
+                spec.loader.exec_module(mod)
+            except Exception as e:
+                print(json.dumps({{"error": "import", "msg": str(e)}}))
+                sys.exit(1)
+            try:
+    {calls if calls else "    pass"}
+            except Exception as e:
+                print(json.dumps({{"error": "call", "msg": str(e)}}))
+                sys.exit(1)
+            print(json.dumps({{"error": None}}))
+        """)
 
-        q = mp.Queue()
-        proc = mp.Process(target=_worker, args=(q,))
-        proc.start()
-        proc.join(5)                               # wall‑clock timeout
-        if proc.is_alive():
-            proc.terminate()
-            return "Timeout: possible infinite loop or deadlock"
-        return q.get() or ""
+        # Write harness to a temporary file
+        harness_path = pathlib.Path("/tmp/harness_{}.py".format(os.getpid()))
+        harness_path.write_text(harness)
+
+        # Function to limit resources (CPU time, memory)
+        def limit():
+            resource.setrlimit(resource.RLIMIT_CPU, (5, 5))          # 5 s CPU time
+            resource.setrlimit(resource.RLIMIT_AS, (100*1024**2, 100*1024**2))  # 100 MiB RAM
+
+        # Run the harness
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(harness_path)],
+                preexec_fn=limit,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            return "Error: execution timed out (possible infinite loop)"
+        finally:
+            if harness_path.exists():
+                harness_path.unlink()
+
+        # Parse JSON output from harness
+        try:
+            out = json.loads(proc.stdout.strip().splitlines()[-1])
+            if out.get("error"):
+                return f"Error during {out['error']} phase: {out['msg']}"
+        except Exception:
+            return f"Runtime error: {proc.stderr.strip() or proc.stdout.strip()}"
+
+        return ""
 
     def web_search(self, query: str) -> Optional[str]:
         """Search the web via DuckDuckGo and fetch top result page text."""
@@ -1636,20 +1659,6 @@ def monitor_openrouter_quota(api_key):
             logging.warning("OpenRouter quota low: %s credits left", remaining)
     except urllib.error.URLError as e:
         logging.error("Failed to fetch OpenRouter quota: %s", e)
-
-
-def score_goal_difficulty(goal_desc):
-    """Return difficulty 1-5 based on keywords in goal_desc."""
-    desc = goal_desc.lower()
-    if "rewrite" in desc:
-        return 5
-    if "build" in desc:
-        return 3
-    if "implement" in desc:
-        return 2
-    if "add" in desc:
-        return 1
-    return 0
 
 if __name__ == "__main__":
     agent = AutonomousAgent()

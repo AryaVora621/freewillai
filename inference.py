@@ -297,11 +297,13 @@ class HybridInferenceEngine:
             max_prompt_tokens = int(os.getenv("OLLAMA_MAX_PROMPT_TOKENS", "400"))
             if estimated_tokens <= max_prompt_tokens:
                 response = self.ollama.generate(prompt, max_tokens=max_tokens)
-                # Quality gate: if local response is too short it likely failed or refused
-                if response and len(response.strip()) >= 30:
+                # Quality gate: response must be non-empty; scale minimum to max_tokens
+                # (short max_tokens like 5 should accept "ready"/"ok"; longer tasks need >30)
+                min_len = min(30, max(3, max_tokens))
+                if response and len(response.strip()) >= min_len:
                     return response
                 if response:
-                    logger.warning(f"Ollama response too short ({len(response.strip())} chars), trying OpenRouter")
+                    logger.warning(f"Ollama response too short ({len(response.strip())} chars, min={min_len}), trying OpenRouter")
                 else:
                     logger.warning("Ollama failed, trying OpenRouter fallback")
             else:

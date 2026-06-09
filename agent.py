@@ -93,7 +93,7 @@ def _sandbox_worker(q, src, func_names):
     import resource, signal, traceback
     resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
     resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
-    resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+    # RLIMIT_NPROC intentionally omitted: mp.Queue.put() needs a feeder thread
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     try:
         mod = {}
@@ -1557,13 +1557,16 @@ def startup_check(agent: 'AutonomousAgent') -> bool:
 
     logger.info("=== STARTUP CHECK ===")
 
-    # Kill any leftover Ollama runner processes from previous session
-    try:
-        r = _sp.run(['pkill', '-9', '-f', 'ollama runner'], capture_output=True, timeout=3)
-        if r.returncode == 0:
-            logger.info("Killed leftover ollama runner processes")
-    except Exception:
-        pass
+    # Skip pkill of ollama runner when local-first -- killing it forces a cold reload
+    # that exceeds the 20s inference timeout.  Only kill when cloud-first.
+    backend_pref = os.getenv("INFERENCE_BACKEND", "cloud-first").lower()
+    if backend_pref != "local-first":
+        try:
+            r = _sp.run(['pkill', '-9', '-f', 'ollama runner'], capture_output=True, timeout=3)
+            if r.returncode == 0:
+                logger.info("Killed leftover ollama runner processes")
+        except Exception:
+            pass
 
     # Test inference is working
     logger.info(f"Testing inference backend: {agent.inference.active_backend}")

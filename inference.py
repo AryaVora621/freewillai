@@ -69,7 +69,8 @@ class OllamaClient:
                 "keep_alive": -1,
                 "options": {"num_predict": max_tokens}
             }
-            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=20)
+            timeout = int(os.getenv("OLLAMA_TIMEOUT", "60"))
+            resp = requests.post(f"{self.base_url}/api/generate", json=payload, timeout=timeout)
             if resp.status_code == 200:
                 return resp.json().get("response", "")
             else:

@@ -88,6 +88,26 @@ class GitController:
         return result.returncode == 0
 
 
+def _sandbox_worker(q, src, func_names):
+    """Module-level sandbox worker so it can be pickled for multiprocessing."""
+    import resource, signal, traceback
+    resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
+    resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
+    resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        mod = {}
+        exec(src, mod)
+        for name in func_names:
+            fn = mod.get(name)
+            if not callable(fn):
+                raise RuntimeError(f"'{name}' is not callable")
+            fn()
+        q.put("")
+    except Exception:
+        q.put(traceback.format_exc())
+
+
 class AutonomousAgent:
     """Main agent with autonomy over repo and decision-making"""
     def __init__(self, repo_path: str = "."):
@@ -413,28 +433,8 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         src = pathlib.Path(code_file).read_text()
         func_names = re.findall(r'^def (\w+)\s*\(', src, re.MULTILINE)
 
-        def _worker(q):
-            # Apply strict limits: 50 MB RSS, 2 s CPU time, no fork, no exec
-            resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
-            resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
-            # Prevent creation of new processes
-            resource.setrlimit(resource.RLIMIT_NPROC, (0, 0))
-            # Disable signals that could escape the sandbox
-            signal.signal(signal.SIGINT, signal.SIG_IGN)
-            try:
-                mod = {}
-                exec(src, mod)                     # load user code
-                for name in func_names:
-                    fn = mod.get(name)
-                    if not callable(fn):
-                        raise RuntimeError(f"'{name}' is not callable")
-                    fn()                           # call with no arguments
-                q.put("")                          # success
-            except Exception:
-                q.put(traceback.format_exc())
-
         q = mp.Queue()
-        proc = mp.Process(target=_worker, args=(q,))
+        proc = mp.Process(target=_sandbox_worker, args=(q, src, func_names))
         proc.start()
         proc.join(5)                               # wall‑clock timeout
         if proc.is_alive():

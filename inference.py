@@ -80,6 +80,11 @@ class OllamaClient:
                 logger.error(f"Ollama error: {resp.status_code}")
                 return None
         except requests.exceptions.Timeout:
+            # In local-first mode the runner IS the primary backend -- killing it
+            # unloads the model from VRAM and forces a cold reload on the next call
+            if os.getenv("INFERENCE_BACKEND", "cloud-first").lower() == "local-first":
+                logger.warning("Ollama timeout — leaving runner alive (local-first mode)")
+                return None
             logger.warning("Ollama timeout — killing background inference process to reclaim CPU")
             try:
                 import subprocess as _sp

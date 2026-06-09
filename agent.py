@@ -441,8 +441,13 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         proc.join(5)                               # wall‑clock timeout
         if proc.is_alive():
             proc.terminate()
-            return "Timeout: possible infinite loop or deadlock"
-        return q.get() or ""
+            return "FAIL: Timeout: possible infinite loop or deadlock"
+        # Caller gates the commit on a "FAIL" prefix, so raw tracebacks must be tagged
+        try:
+            err = q.get(timeout=2) or ""
+        except Exception:
+            return "FAIL: sandbox process died without reporting a result"
+        return f"FAIL: {err}" if err.strip() else ""
 
     def web_search(self, query: str) -> Optional[str]:
         """Search the web via DuckDuckGo and fetch top result page text."""

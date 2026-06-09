@@ -1007,6 +1007,16 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
             return "No def found in generated code"
         func_name = func_m.group(1)
 
+        # Infrastructure functions the agent must never rewrite: a bad self-edit to
+        # any of these silently breaks the test/commit/inference safety loop itself
+        protected = {
+            'test_code_improvement', 'self_edit_file', '_sandbox_worker',
+            'generate', 'generate_code', 'generate_fast', 'startup_check',
+            'run_iteration_v2', 'commit',
+        }
+        if func_name in protected:
+            return "Blocked: " + func_name + "() is protected infrastructure"
+
         # Line-based function replacement
         orig_lines = original.splitlines(keepends=True)
         new_func_lines = new_code.splitlines(keepends=True)

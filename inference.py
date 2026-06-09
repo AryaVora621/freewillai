@@ -67,6 +67,9 @@ class OllamaClient:
                 "prompt": prompt,
                 "stream": False,
                 "keep_alive": -1,
+                # Thinking models (qwen3) burn num_predict on the thinking field and
+                # return an empty response, which trips the quality gate every time
+                "think": False,
                 "options": {"num_predict": max_tokens}
             }
             timeout = int(os.getenv("OLLAMA_TIMEOUT", "60"))

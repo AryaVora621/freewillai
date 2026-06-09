@@ -114,18 +114,23 @@ class OpenRouterClient:
         "qwen/qwen3-30b-a3b:free",
     ]
     FREE_CODE_MODELS = [
-        "qwen/qwen3-coder-turbo:free",
-        "nvidia/nemotron-3-super-120b-a12b:free",
         "openai/gpt-oss-120b:free",
-        "meta-llama/llama-3.3-70b-instruct:free",
         "moonshotai/kimi-k2.6:free",
+        "meta-llama/llama-3.3-70b-instruct:free",
     ]
+    # These models return prose instead of code even with system prompts -- skip for code tasks
+    PROSE_ONLY_MODELS = {
+        "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "qwen/qwen3-coder-turbo:free",  # returning 404
+        "qwen/qwen3-30b-a3b:free",      # returning 404
+    }
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")
         self.model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-120b:free")
         self.eval_model = os.getenv("OPENROUTER_EVAL_MODEL", self.model)
-        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "qwen/qwen3-coder-turbo:free")
+        self.code_model = os.getenv("OPENROUTER_CODE_MODEL", "openai/gpt-oss-120b:free")
         self.base_url = "https://openrouter.ai/api/v1"
         self._rate_limited_models = set()
         # Simple in-memory LRU cache: (prompt_hash, model) -> response
@@ -142,7 +147,7 @@ class OpenRouterClient:
         import hashlib
         return hashlib.md5((prompt[:500] + model).encode()).hexdigest()
 
-    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None) -> Optional[str]:
+    def generate(self, prompt: str, max_tokens: int = 500, model: Optional[str] = None, system: Optional[str] = None, allow_fallback: bool = True) -> Optional[str]:
         """Generate response from OpenRouter"""
         if not self.api_key:
             logger.warning("OPENROUTER_API_KEY not set")
@@ -150,7 +155,7 @@ class OpenRouterClient:
 
         # Cache hit -- skip API call for identical prompts
         active_model = model or self.model
-        cache_key = self._cache_key(prompt, active_model)
+        cache_key = self._cache_key(prompt + (system or ""), active_model)
         if cache_key in self._response_cache:
             logger.debug("OpenRouter cache hit")
             return self._response_cache[cache_key]
@@ -171,9 +176,13 @@ class OpenRouterClient:
                 "HTTP-Referer": "https://github.com/aryavora/freeWillAi",
                 "X-Title": "freeWillAi"
             }
+            messages = []
+            if system:
+                messages.append({"role": "system", "content": system})
+            messages.append({"role": "user", "content": prompt})
             payload = {
                 "model": model or self.model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
                 "temperature": 0.7,
                 "max_tokens": max_tokens
             }
@@ -213,6 +222,8 @@ class OpenRouterClient:
             active_model = model or self.model
             self._rate_limited_models.add(active_model)
             logger.error(f"OpenRouter rate-limited after retries, giving up on {active_model}")
+            if not allow_fallback:
+                return None
             # Try a different model from the pool if available
             all_models = self.FREE_MAIN_MODELS + self.FREE_CODE_MODELS
             for alt in all_models:
@@ -314,13 +325,27 @@ class HybridInferenceEngine:
                 return resp
         return self.generate(prompt, max_tokens=max_tokens)
 
-    def generate_code(self, prompt: str, max_tokens: int = 300) -> Optional[str]:
-        """Use the code-specialized model (qwen3-coder) for code generation tasks."""
-        if self.openrouter.is_available():
-            resp = self.openrouter.generate(prompt, max_tokens=max_tokens, model=self.openrouter.code_model)
+    def generate_code(self, prompt: str, max_tokens: int = 300, system: Optional[str] = None) -> Optional[str]:
+        """Use code-safe models only (never nemotron/prose-only models).
+        Manages its own fallback so generate() doesn't silently fall back to bad models.
+        """
+        if not self.openrouter.is_available():
+            return None
+        or_client = self.openrouter
+        # Try each code-safe model in priority order; skip prose-only and rate-limited
+        candidates = [or_client.code_model] + [
+            m for m in or_client.FREE_CODE_MODELS
+            if m != or_client.code_model and m not in or_client.PROSE_ONLY_MODELS
+        ]
+        for model_id in candidates:
+            if model_id in or_client.PROSE_ONLY_MODELS or model_id in or_client._rate_limited_models:
+                continue
+            logger.debug(f"Code gen: trying {model_id}")
+            resp = or_client.generate(prompt, max_tokens=max_tokens, model=model_id,
+                                      system=system, allow_fallback=False)
             if resp:
                 return resp
-        return self.generate(prompt, max_tokens=max_tokens)
+        return None
 
     def get_active_model(self) -> str:
         """Get name of currently active model"""

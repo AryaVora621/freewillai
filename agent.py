@@ -314,45 +314,67 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
 
     def apply_code_improvement(self, suggestion: str) -> Optional[str]:
         """Generate and write a concrete code snippet for the top improvement suggestion."""
-        prompt = (
-            'Write a short Python function (max 20 lines) for a Raspberry Pi.' + chr(10) +
-            'Task: ' + suggestion[:120] + chr(10) +
-            'STRICT RULES: max 20 lines total, no docstring longer than 1 line, stdlib only.' + chr(10) +
-            'STOP after the closing return statement. No extra code.' + chr(10) +
-            'def '
+        system_msg = (
+            'You are a Python code generator. '
+            'Output ONLY valid Python code. '
+            'No explanations, no prose, no markdown fences. '
+            'First line MUST start with "def ". '
+            'Never write sentences or paragraphs.'
         )
-        code = self.inference.generate_code(prompt, max_tokens=400)
-        if code and not code.startswith('def '):
-            code = 'def ' + code
-        # Truncate to max 25 lines to prevent incomplete code
-        if code:
-            code_lines = code.splitlines()
-            if len(code_lines) > 25:
-                # Find last complete statement before line 25
-                code = chr(10).join(code_lines[:22]) + chr(10)
-        if not code or len(code.strip()) < 20:
+        prompt = (
+            'Write a Python function (max 20 lines, stdlib only, Raspberry Pi 4).\n'
+            'Task: ' + suggestion[:120] + '\n'
+            'Rules: max 20 lines, one-line docstring only, no imports at top.\n'
+            'Output starts with: def '
+        )
+        code = self.inference.generate_code(prompt, max_tokens=400, system=system_msg)
+        if not code:
             return None
 
-        # Strip markdown fences and leading prose
+        # Strip markdown fences
         code = code.strip()
         if code.startswith("```"):
             lines = code.splitlines()
-            if lines[0].startswith("```"):
-                lines = lines[1:]
+            lines = lines[1:] if lines[0].startswith("```") else lines
             if lines and lines[-1].strip().startswith("```"):
                 lines = lines[:-1]
-            code = chr(10).join(lines).strip()
-        # Strip leading prose lines (text before first def/class/import)
-        code_starts = ('def ', 'class ', 'import ', 'from ', 'async def ', '#!')
+            code = "\n".join(lines).strip()
+
+        # Prepend def if response omitted it
+        if not code.startswith('def '):
+            code = 'def ' + code
+
+        # Strip any leading prose before first def/class/import
+        code_starts = ('def ', 'class ', 'import ', 'from ', 'async def ')
         code_lines = code.splitlines()
-        first_code = 0
-        for i, line in enumerate(code_lines):
-            if any(line.lstrip().startswith(p) for p in code_starts):
-                first_code = i
-                break
+        first_code = next(
+            (i for i, ln in enumerate(code_lines) if any(ln.lstrip().startswith(p) for p in code_starts)),
+            0
+        )
         if first_code > 0:
-            code = chr(10).join(code_lines[first_code:])
+            code = "\n".join(code_lines[first_code:])
         code = code.strip()
+
+        # Hard reject: if no def found or looks like prose (no colon on first code line)
+        if not code.startswith('def ') or ':' not in code.split('\n')[0]:
+            logger.warning("Code generation returned prose (no def header), rejecting")
+            return None
+
+        # Truncate to 25 lines max
+        lines = code.splitlines()
+        if len(lines) > 25:
+            code = "\n".join(lines[:22])
+
+        if len(code.strip()) < 20:
+            return None
+
+        # Syntax-check before writing -- catches mixed prose/code (e.g. prose at line 18+)
+        import ast as _ast
+        try:
+            _ast.parse(code)
+        except SyntaxError as e:
+            logger.warning(f"Code generation syntax error at line {e.lineno}: rejecting")
+            return None
 
         improvements_dir = Path(self.repo_path) / "improvements"
         improvements_dir.mkdir(exist_ok=True)
@@ -520,12 +542,17 @@ print("OK: {len(func_names)} function(s) defined and callable")
             "Write function generate_test_case(func_code) that produces a minimal assert-based test for a given function definition",
             "Add /diff Telegram command showing git diff --stat HEAD~3..HEAD to summarize last 3 commits of changes",
         ]
-        # Skip any category already completed
-        completed_descs = {g["description"] for g in self.state["goals"]
-                           if g.get("status") == "completed"}
-        remaining = [c for c in goal_categories if c not in completed_descs]
+        # Skip categories already completed or deferred (≥3 consecutive code-gen failures)
+        skip_descs = {g["description"] for g in self.state["goals"]
+                      if g.get("status") in ("completed", "deferred")}
+        remaining = [c for c in goal_categories if c not in skip_descs]
         if not remaining:
-            remaining = goal_categories  # all done — cycle again
+            # Re-open deferred goals on second pass (maybe models are available now)
+            for g in self.state["goals"]:
+                if g.get("status") == "deferred":
+                    g["status"] = "active"
+                    g["fail_count"] = 0
+            remaining = goal_categories
 
         # Data-driven selection: prefer categories that produced passing tests historically.
         # Falls back to simple cycling if no stats exist yet.
@@ -1341,11 +1368,18 @@ print("OK: {len(func_names)} function(s) defined and callable")
                 if candidate.exists():
                     code_file = str(candidate)
                     result = code
+                    goal["fail_count"] = 0  # reset on successful generation
                     # Update goal progress log so it doesn't go stale
                     goal["progress_log"].append(f"Generated code: {candidate.name}")
                     goal["progress_log"] = goal["progress_log"][-5:]
                     logger.info(f"IMPLEMENT: wrote {candidate.name}")
                 else:
+                    # Code generation failed (prose rejected or API error)
+                    goal["fail_count"] = goal.get("fail_count", 0) + 1
+                    logger.warning(f"Code gen failed for goal #{goal['id']} (fail_count={goal['fail_count']})")
+                    if goal["fail_count"] >= 3:
+                        goal["status"] = "deferred"
+                        logger.warning(f"Goal #{goal['id']} deferred after {goal['fail_count']} failures")
                     result = code
             else:
                 result = self.work_on_goal(goal)

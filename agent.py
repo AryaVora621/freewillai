@@ -91,7 +91,9 @@ class GitController:
 def _sandbox_worker(q, src, func_names):
     """Module-level sandbox worker so it can be pickled for multiprocessing."""
     import resource, signal, traceback
-    resource.setrlimit(resource.RLIMIT_AS, (50 * 1024 ** 2, 50 * 1024 ** 2))
+    # 512MB: q.put() spawns a feeder thread whose stack allocation fails under
+    # a 50MB address-space cap on Python 3.14. RLIMIT_CPU is the real guard.
+    resource.setrlimit(resource.RLIMIT_AS, (512 * 1024 ** 2, 512 * 1024 ** 2))
     resource.setrlimit(resource.RLIMIT_CPU, (2, 2))
     # RLIMIT_NPROC intentionally omitted: mp.Queue.put() needs a feeder thread
     signal.signal(signal.SIGINT, signal.SIG_IGN)

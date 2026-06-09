@@ -256,11 +256,15 @@ class HybridInferenceEngine:
         self.openrouter = OpenRouterClient()
         self.active_backend = None
 
-        # OpenRouter-first: prevents Ollama from blocking SSH by consuming 100% CPU.
-        # Ollama is reserved for generate_fast() only (smollm2:135m — fast eval responses).
-        if self.openrouter.is_available():
+        # Honor INFERENCE_BACKEND env: "local-first" or "cloud-first" (default)
+        backend_pref = os.getenv("INFERENCE_BACKEND", "cloud-first").lower()
+
+        if backend_pref == "local-first" and self.ollama.is_available():
+            self.active_backend = "ollama"
+            logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend (local-first mode)")
+        elif self.openrouter.is_available():
             self.active_backend = "openrouter"
-            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (SSH-safe)")
+            logger.info(f"✓ Using OpenRouter ({self.openrouter.model}) as primary backend (cloud-first mode)")
         elif self.ollama.is_available():
             self.active_backend = "ollama"
             logger.info(f"✓ Using Ollama ({self.ollama.model}) as primary backend (no cloud API key)")
@@ -289,7 +293,8 @@ class HybridInferenceEngine:
             # Estimate prompt tokens (1 token ≈ 4 chars); skip local if too long for the timeout.
             # At ~4 tokens/sec (3B model), 400 tokens ≈ 100s — safe under 120s timeout.
             estimated_tokens = len(prompt) / 4
-            if estimated_tokens <= 400:
+            max_prompt_tokens = int(os.getenv("OLLAMA_MAX_PROMPT_TOKENS", "400"))
+            if estimated_tokens <= max_prompt_tokens:
                 response = self.ollama.generate(prompt, max_tokens=max_tokens)
                 # Quality gate: if local response is too short it likely failed or refused
                 if response and len(response.strip()) >= 30:
@@ -329,6 +334,16 @@ class HybridInferenceEngine:
         """Use code-safe models only (never nemotron/prose-only models).
         Manages its own fallback so generate() doesn't silently fall back to bad models.
         """
+        # In local-first mode, try local code model first
+        backend_pref = os.getenv("INFERENCE_BACKEND", "cloud-first").lower()
+        if backend_pref == "local-first" and self.ollama.is_available():
+            code_model = os.getenv("OLLAMA_CODE_MODEL", self.ollama.model)
+            logger.debug(f"Code gen: trying local model {code_model}")
+            resp = self.ollama.generate(prompt, max_tokens=max_tokens)
+            if resp and len(resp.strip()) >= 20:
+                return resp
+            logger.warning("Local code model failed, falling back to OpenRouter")
+
         if not self.openrouter.is_available():
             return None
         or_client = self.openrouter

@@ -134,13 +134,26 @@ class AutonomousAgent:
         with open(self.state_file, 'w') as f:
             json.dump(self.state, f, indent=2)
 
-    # Hardware context injected into all prompts — prevents GPU/Docker/CUDA suggestions
-    HARDWARE_CONTEXT = (
-        'HARDWARE: Raspberry Pi 4 (4-core ARM Cortex-A72, 4GB RAM, SD card storage, NO GPU).' + chr(10) +
-        'INFERENCE: Primary=OpenRouter cloud API (fast, free tier). Local=smollm2:135m via Ollama (eval only).' + chr(10) +
-        'CONSTRAINTS: No CUDA, no Docker, no vLLM, no GPU libraries. Python 3.11, ARM Linux.' + chr(10) +
-        'GOAL: Be a self-improving autonomous agent. Improve your own code, add capabilities, fix bugs.'
-    )
+    def _build_hardware_context(self):
+        """Build hardware context from env vars or defaults"""
+        hw_short = os.getenv("AGENT_HW_SHORT", "Raspberry Pi 4")
+        hw_long = os.getenv("AGENT_HARDWARE_CONTEXT")
+        if hw_long:
+            return hw_long
+        # Fallback defaults by hw_short
+        if "i7-6900K" in hw_short or "aiserver" in hw_short:
+            return (
+                f'HARDWARE: {hw_short} (16-core i7, 29GB RAM, 791GB disk, GTX P40 24GB).' + chr(10) +
+                'INFERENCE: Primary=Ollama local (qwen3:14b, qwen3-coder:30b). Cloud fallback=OpenRouter.' + chr(10) +
+                'CONSTRAINTS: CUDA 11.8, no Docker constraints. Ubuntu 22.04, x86_64.' + chr(10) +
+                'GOAL: Be a self-improving autonomous agent. Improve your own code, add capabilities, fix bugs.'
+            )
+        return (
+            f'HARDWARE: {hw_short} (4-core ARM Cortex-A72, 4GB RAM, SD card storage, NO GPU).' + chr(10) +
+            'INFERENCE: Primary=OpenRouter cloud API (fast, free tier). Local=smollm2:135m via Ollama (eval only).' + chr(10) +
+            'CONSTRAINTS: No CUDA, no Docker, no vLLM, no GPU libraries. Python 3.11, ARM Linux.' + chr(10) +
+            'GOAL: Be a self-improving autonomous agent. Improve your own code, add capabilities, fix bugs.'
+        )
 
     def think(self, goal: str) -> str:
         """Generate a concrete, single-step code modification suggestion."""
@@ -159,15 +172,16 @@ class AutonomousAgent:
             d['decision'][:50] for d in self.state.get('decisions', [])[-2:]
         )
 
+        hw_short = _os.getenv("AGENT_HW_SHORT", "Raspberry Pi 4")
         prompt = (
-            self.HARDWARE_CONTEXT + chr(10) + chr(10) +
+            self._build_hardware_context() + chr(10) + chr(10) +
             'You are a code improvement agent for this repo.' + chr(10) +
             'Repo files: ' + files_list + chr(10) +
             f'Iteration: {iteration}' + chr(10) +
             'Recent decisions: ' + (recent_decisions or 'none') + chr(10) +
             'Current goal: ' + goal[:100] + chr(10) +
             'Last test: ' + recent_test + chr(10) + chr(10) +
-            'Suggest ONE concrete, Pi-compatible code change. Respond with JSON only:' + chr(10) +
+            f'Suggest ONE concrete, {hw_short}-compatible code change. Respond with JSON only:' + chr(10) +
             '{"file":"filename.py","change":"specific what to change","rationale":"why this helps"}' + chr(10) +
             'JSON:'
         )
@@ -575,7 +589,7 @@ Be practical. What's actually achievable for an autonomous AI agent?"""
         is_code_goal = any(w in goal['description'].lower()
                           for w in ['implement', 'write', 'create', 'build', 'code', 'python', 'module', 'function'])
 
-        hw = self.HARDWARE_CONTEXT
+        hw = self._build_hardware_context()
         if is_code_goal:
             prompt = (
                 hw + chr(10) + chr(10) +
